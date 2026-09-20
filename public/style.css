@@ -329,8 +329,8 @@ button.primary { background: var(--accent); }
 .nodes { position: absolute; top: 0; left: 0; }
 
 .empty-center {
-  position: fixed;
-  left: 50%; top: 55%;
+  position: absolute;
+  left: 50%; top: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
   background: var(--panel);
@@ -339,7 +339,7 @@ button.primary { background: var(--accent); }
   padding: 36px 40px;
   box-shadow: 0 8px 30px rgba(30, 35, 60, 0.12);
   width: min(460px, 86vw);
-  z-index: 5;
+  z-index: 20;
 }
 .empty-center .empty-title { font-size: 22px; font-weight: 800; color: var(--text); margin-bottom: 8px; }
 .empty-center .empty-sub { color: var(--muted); font-size: 14px; margin-bottom: 20px; }

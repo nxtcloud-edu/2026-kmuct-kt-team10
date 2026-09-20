@@ -398,18 +398,24 @@ function renderCanvas() {
   edges.setAttribute('width', maxX + 200);
   edges.setAttribute('height', maxY + 200);
 
+  // 이전에 그린 빈 상태 카드 제거 (있으면)
+  const oldEmpty = document.getElementById('empty-center');
+  if (oldEmpty) oldEmpty.remove();
+
   if (topics.length === 0) {
     const input = el('input', { class: 'empty-input', placeholder: '예: 웹사이트 리뉴얼 방향 논의', id: 'empty-topic-input' });
     const submit = () => addRootTopicFromEmpty(input.value);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    nodesLayer.append(el('div', { class: 'empty-center' }, [
+    // viewport(패닝·줌 transform)의 영향을 받지 않도록 캔버스에 직접 붙인다.
+    const card = el('div', { class: 'empty-center', id: 'empty-center' }, [
       el('div', { class: 'empty-title' }, '📝 회의 내용을 적어주세요'),
       el('div', { class: 'empty-sub' }, '첫 회의 안건을 입력하면 바로 마인드맵이 시작됩니다.'),
       el('div', { class: 'empty-form' }, [
         input,
         el('button', { class: 'empty-add-btn', onclick: submit }, '＋ 안건 추가'),
       ]),
-    ]));
+    ]);
+    $('#canvas').append(card);
     // 자동 포커스
     requestAnimationFrame(() => input.focus());
   }
