@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>협업 회의 플랫폼</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">🧠 협업 회의 플랫폼</div>
+      <div id="ws-info" class="ws-info"></div>
+    </header>
+
+    <!-- 시작 화면: 워크스페이스 생성 또는 입장 -->
+    <section id="landing" class="landing">
+      <div class="card">
+        <h2>새 워크스페이스 만들기</h2>
+        <input id="new-ws-name" placeholder="워크스페이스 이름 (예: 팀 프로젝트 회의)" />
+        <input id="new-host-name" placeholder="내 이름 (방장)" />
+        <button id="btn-create-ws">만들기</button>
+      </div>
+      <div class="card">
+        <h2>기존 워크스페이스 입장</h2>
+        <input id="join-ws-id" placeholder="워크스페이스 ID 또는 링크" />
+        <input id="join-name" placeholder="내 이름" />
+        <button id="btn-join-ws">입장</button>
+      </div>
+    </section>
+
+    <!-- 초대 링크로 접속 시 이름만 입력하는 간단 입장 화면 -->
+    <section id="invite" class="landing hidden">
+      <div class="card invite-card">
+        <h2 id="invite-title">회의에 초대되었습니다</h2>
+        <p id="invite-sub" class="muted"></p>
+        <input id="invite-name" placeholder="내 이름을 입력하세요" />
+        <button id="btn-invite-join">입장하기</button>
+      </div>
+    </section>
+
+    <!-- 메인 화면 -->
+    <main id="app" class="app hidden">
+      <aside class="sidebar">
+        <div class="panel">
+          <h3>참여자</h3>
+          <ul id="participant-list" class="participant-list"></ul>
+          <div class="share">
+            <span>초대 링크</span>
+            <button id="btn-copy-link" class="wide primary">🔗 링크 복사</button>
+            <code id="ws-id-copy" class="ws-id"></code>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>안건 추가</h3>
+          <input id="new-topic-title" placeholder="새 안건/토픽 제목" />
+          <button id="btn-add-root-topic" class="wide">＋ 최상위 안건 추가</button>
+        </div>
+        <div class="panel">
+          <button id="btn-summary" class="wide">📄 회의 정리 (LLM)</button>
+        </div>
+        <div class="panel hint">
+          <h3>사용법</h3>
+          <ul class="hint-list">
+            <li>노드를 <b>드래그</b>해 자유롭게 배치</li>
+            <li>노드를 <b>클릭</b>하면 상세 열림</li>
+            <li>빈 곳을 드래그하면 <b>화면 이동</b></li>
+            <li>상세에서 <b>색상·사진·파일</b> 추가</li>
+          </ul>
+        </div>
+      </aside>
+
+      <section class="canvas-wrap">
+        <div class="canvas-header">
+          <span>🗺️ 마인드맵 캔버스</span>
+          <span class="legend">
+            <em class="dot open"></em> 논의 중
+            <em class="dot decided"></em> 완료
+            <button id="btn-reset-view" class="mini">화면 초기화</button>
+          </span>
+        </div>
+        <div id="canvas" class="canvas">
+          <div id="viewport" class="viewport">
+            <svg id="edges" class="edges"></svg>
+            <div id="nodes" class="nodes"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside id="detail" class="detail hidden">
+        <button id="btn-close-detail" class="close">✕</button>
+        <div id="detail-body"></div>
+      </aside>
+    </main>
+
+    <!-- 알림 토스트 -->
+    <div id="toasts" class="toasts"></div>
+
+    <!-- 요약 모달 -->
+    <div id="summary-modal" class="modal hidden">
+      <div class="modal-card">
+        <button id="btn-close-summary" class="close">✕</button>
+        <h2>회의 정리</h2>
+        <div id="summary-content" class="summary-content"></div>
+      </div>
+    </div>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
