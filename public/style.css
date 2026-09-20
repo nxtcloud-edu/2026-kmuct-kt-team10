@@ -328,21 +328,33 @@ button.primary { background: var(--accent); }
 }
 .nodes { position: absolute; top: 0; left: 0; }
 
-.empty-hint {
-  position: absolute; left: 40px; top: 40px;
-  color: var(--muted); font-size: 14px; width: 300px;
+.empty-center {
+  position: fixed;
+  left: 50%; top: 55%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 36px 40px;
+  box-shadow: 0 8px 30px rgba(30, 35, 60, 0.12);
+  width: min(460px, 86vw);
+  z-index: 5;
 }
-.empty-hint .empty-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
-.empty-hint .empty-sub { margin-bottom: 14px; }
+.empty-center .empty-title { font-size: 22px; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+.empty-center .empty-sub { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+.empty-center .empty-form { display: flex; gap: 8px; }
+.empty-center .empty-input {
+  flex: 1; margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.empty-center .empty-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 .empty-add-btn {
-  padding: 12px 20px; font-size: 15px; font-weight: 700;
+  padding: 12px 18px; font-size: 15px; font-weight: 700; white-space: nowrap;
   background: var(--accent); color: #fff; border-radius: 10px; cursor: pointer;
   box-shadow: var(--shadow);
 }
 .empty-add-btn:hover { filter: brightness(1.05); }
-/* 사이드바 입력 강조 (빈 상태에서 안건 추가 유도) */
-input.pulse { animation: inputPulse 1.2s ease; }
-@keyframes inputPulse { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 0 4px var(--accent-soft); border-color:var(--accent)} }
 
 /* 타원형 토픽 노드 (계층적 크기) */
 .node {

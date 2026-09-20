@@ -399,11 +399,19 @@ function renderCanvas() {
   edges.setAttribute('height', maxY + 200);
 
   if (topics.length === 0) {
-    nodesLayer.append(el('div', { class: 'empty-hint' }, [
-      el('div', { class: 'empty-title' }, '🗺️ 아직 안건이 없습니다'),
-      el('div', { class: 'empty-sub' }, '첫 안건(토픽)을 추가해 회의를 시작하세요.'),
-      el('button', { class: 'empty-add-btn', onclick: openNewTopicPrompt }, '＋ 첫 안건 추가'),
+    const input = el('input', { class: 'empty-input', placeholder: '예: 웹사이트 리뉴얼 방향 논의', id: 'empty-topic-input' });
+    const submit = () => addRootTopicFromEmpty(input.value);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    nodesLayer.append(el('div', { class: 'empty-center' }, [
+      el('div', { class: 'empty-title' }, '📝 회의 내용을 적어주세요'),
+      el('div', { class: 'empty-sub' }, '첫 회의 안건을 입력하면 바로 마인드맵이 시작됩니다.'),
+      el('div', { class: 'empty-form' }, [
+        input,
+        el('button', { class: 'empty-add-btn', onclick: submit }, '＋ 안건 추가'),
+      ]),
     ]));
+    // 자동 포커스
+    requestAnimationFrame(() => input.focus());
   }
 
   // --- 토픽 노드 (계층적 타원형) ---
@@ -788,13 +796,16 @@ async function addRootTopic() {
   $('#new-topic-title').value = '';
 }
 
-// 빈 캔버스에서 첫 안건 추가 (사이드바 입력창으로 포커스 유도)
-function openNewTopicPrompt() {
-  const input = $('#new-topic-title');
-  input.focus();
-  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  input.classList.add('pulse');
-  setTimeout(() => input.classList.remove('pulse'), 1200);
+// 빈 캔버스 중앙 입력창에서 첫 안건을 바로 추가
+async function addRootTopicFromEmpty(value) {
+  const title = (value || '').trim();
+  if (!title) return toast('회의 안건을 입력하세요.');
+  try {
+    await api.post(`/api/workspaces/${state.workspace.id}/topics`, { title, createdBy: state.me.id });
+    // topic_created 이벤트로 캔버스가 다시 그려짐
+  } catch (err) {
+    toast('안건 추가 실패: ' + err.message);
+  }
 }
 
 // 토픽 제목 수정 (캔버스 노드에서)
