@@ -224,6 +224,8 @@ function renderParticipants() {
 function maybeNotify(topic, message, topicId) {
   // 내가 이 토픽의 멤버(참여자)일 때만 알림
   if (!topic || !topic.members?.includes(state.me?.id)) return;
+  // 이미 확인(읽은)한 알림은 보관하지 않는다 — 안 읽은 알림만 유지
+  state.notifications = state.notifications.filter((n) => !n.read);
   state.notifications.unshift({
     id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     topicId,
@@ -270,16 +272,18 @@ function renderNotiList() {
   const list = $('#noti-list');
   const empty = $('#noti-empty');
   list.innerHTML = '';
-  if (state.notifications.length === 0) {
+  // 확인(읽은) 알림은 목록에 표시하지 않는다 — 안 읽은 것만 노출
+  const unread = state.notifications.filter((n) => !n.read);
+  if (unread.length === 0) {
     empty.classList.remove('hidden');
     return;
   }
   empty.classList.add('hidden');
-  for (const n of state.notifications) {
+  for (const n of unread) {
     const time = new Date(n.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     list.append(
       el('li', {
-        class: `noti-item ${n.read ? 'read' : 'unread'}`,
+        class: 'noti-item unread',
         title: '클릭하면 해당 토픽 위치로 이동',
         onclick: () => onNotiClick(n),
       }, [
@@ -290,10 +294,11 @@ function renderNotiList() {
   }
 }
 
-// 알림 클릭: 읽음 처리 + 해당 토픽 위치로 캔버스 이동 & 하이라이트
+// 알림 클릭: 읽음 처리 → 목록에서 사라짐 + 해당 토픽 위치로 이동 & 하이라이트
 function onNotiClick(n) {
   n.read = true;
   updateBell();
+  renderNotiList();       // 읽은 항목이 목록에서 즉시 제거되도록 갱신
   toggleNotiDropdown(false);
   focusTopic(n.topicId);
 }
