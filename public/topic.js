@@ -128,6 +128,10 @@ function handleEvent(event) {
     const cm = op?.comments.find((c) => c.id === event.comment.id);
     if (cm) { cm.content = event.comment.content; cm.editedAt = event.comment.editedAt; }
     renderOpinions();
+  } else if (event.type === 'comment_deleted' && event.topicId === TOPIC_ID) {
+    const op = state.topic.opinions.find((o) => o.id === event.opinionId);
+    if (op) op.comments = op.comments.filter((c) => c.id !== event.commentId);
+    renderOpinions();
   } else if (event.type === 'topic_deleted') {
     const ids = new Set(event.deletedIds || [event.topicId]);
     if (ids.has(TOPIC_ID)) {
@@ -323,6 +327,7 @@ function renderOpinion(op) {
         el('span', { class: 'author' }, nameOf(c.authorId)),
         el('span', { class: 'c-body' }, c.content + (c.editedAt ? ' (수정됨)' : '')),
         canEdit ? el('button', { class: 'c-edit', title: '답글 수정', onclick: () => startEditComment(op, c) }, '✏️') : null,
+        canEdit ? el('button', { class: 'c-edit', title: '답글 삭제', onclick: () => deleteComment(op, c) }, '🗑') : null,
       ]));
     }
     bubble.append(cw);
@@ -330,10 +335,16 @@ function renderOpinion(op) {
 
   if (state.topic.members.includes(state.me.id)) {
     const input = el('input', { placeholder: '답글...' });
+    let sending = false;
     const submit = async () => {
+      if (sending) return; // 연타 방지
       const content = input.value.trim(); if (!content) return;
-      await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${op.id}/comments`, { authorId: state.me.id, content });
-      input.value = '';
+      sending = true;
+      try {
+        await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${op.id}/comments`, { authorId: state.me.id, content });
+        input.value = '';
+      } catch (e) { toast('답글 등록 실패: ' + e.message); }
+      finally { sending = false; }
     };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
     bubble.append(el('div', { class: 'chat-reply-form' }, [input, el('button', { class: 'mini', onclick: submit }, '답글')]));
@@ -387,6 +398,18 @@ async function startEditComment(op, c) {
   } catch (e) { toast('수정 실패: ' + e.message); }
 }
 
+// 답글 삭제
+async function deleteComment(op, c) {
+  if (!confirm('이 답글을 삭제할까요?')) return;
+  try {
+    await api.req('DELETE', `/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${op.id}/comments/${c.id}`);
+    const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`);
+    state.topic = fresh; syncTopicInWorkspace(fresh);
+    renderOpinions();
+    toast('답글을 삭제했습니다.');
+  } catch (e) { toast('삭제 실패: ' + e.message); }
+}
+
 // ---------- 액션 ----------
 async function updateStyle(patch) { try { state.topic = await api.patch(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`, patch); syncTopicInWorkspace(state.topic); renderSidebar(); renderDocMeta(); } catch (e) { toast('수정 실패: ' + e.message); } }
 async function joinTopic() { state.topic = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/join`, { participantId: state.me.id }); syncTopicInWorkspace(state.topic); renderSidebar(); }
@@ -394,12 +417,16 @@ async function leaveTopic() { state.topic = await api.post(`/api/workspaces/${WS
 async function toggleCheck() { state.topic = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/check`, { participantId: state.me.id }); syncTopicInWorkspace(state.topic); renderSidebar(); renderDocMeta(); }
 
 async function addOpinion() {
+  // 연타로 인한 중복 등록 방지
+  if (state.submittingOpinion) return;
   const title = $('#op-title').value.trim();
   const content = $('#op-input').value.trim();
 
   // 편집 모드: 기존 의견 수정 (PATCH)
   if (state.editingOpinionId) {
     if (!content) return toast('의견 본문을 입력하세요.');
+    state.submittingOpinion = true;
+    const btn = $('#btn-op-submit'); if (btn) btn.disabled = true;
     try {
       await api.patch(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${state.editingOpinionId}`, { title, content });
       const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`);
@@ -409,20 +436,30 @@ async function addOpinion() {
       renderOpinions(); renderSidebar(); renderDocMeta();
       toast('의견을 수정했습니다.');
     } catch (e) { toast('수정 실패: ' + e.message); }
+    finally { state.submittingOpinion = false; if (btn) btn.disabled = false; }
     return;
   }
 
   const fileInput = $('#op-files');
   const files = fileInput ? [...fileInput.files] : [];
   if (!content && !files.length) return toast('의견 본문 또는 파일을 입력하세요.');
-  let attachments = [];
-  if (files.length) { toast(`파일 ${files.length}개 업로드 중...`); try { attachments = await Promise.all(files.map(uploadFile)); } catch (e) { return toast('업로드 실패: ' + e.message); } }
-  const { analysis } = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions`, { authorId: state.me.id, title, content, attachments });
-  const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`); state.topic = fresh; syncTopicInWorkspace(fresh);
-  closeOpinionModal();
-  renderSidebar();
-  renderDocMeta();
-  if (analysis?.summary) toast('🤖 ' + analysis.summary, analysis.results?.some((r) => r.type === 'duplicate' || r.type === 'conflict'));
+  state.submittingOpinion = true;
+  const submitBtn = $('#btn-op-submit'); if (submitBtn) submitBtn.disabled = true;
+  try {
+    let attachments = [];
+    if (files.length) { toast(`파일 ${files.length}개 업로드 중...`); attachments = await Promise.all(files.map(uploadFile)); }
+    const { analysis } = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions`, { authorId: state.me.id, title, content, attachments });
+    const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`); state.topic = fresh; syncTopicInWorkspace(fresh);
+    closeOpinionModal();
+    renderSidebar();
+    renderDocMeta();
+    if (analysis?.summary) toast('🤖 ' + analysis.summary, analysis.results?.some((r) => r.type === 'duplicate' || r.type === 'conflict'));
+  } catch (e) {
+    toast('등록 실패: ' + e.message);
+  } finally {
+    state.submittingOpinion = false;
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }
 
 async function addSubtopic() {

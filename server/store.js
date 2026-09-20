@@ -321,6 +321,19 @@ class Store {
     return { topic, opinion, comment };
   }
 
+  // 댓글 삭제
+  deleteComment(wsId, topicId, opinionId, commentId) {
+    const topic = this.getTopic(wsId, topicId);
+    if (!topic) return null;
+    const opinion = topic.opinions.find((o) => o.id === opinionId);
+    if (!opinion) return null;
+    const before = opinion.comments.length;
+    opinion.comments = opinion.comments.filter((c) => c.id !== commentId);
+    if (opinion.comments.length === before) return null;
+    this.persist();
+    return { topic, opinion };
+  }
+
   // ---- Check / Decision ----
   toggleCheck(wsId, topicId, participantId) {
     const topic = this.getTopic(wsId, topicId);

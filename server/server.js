@@ -361,6 +361,19 @@ app.patch('/api/workspaces/:id/topics/:topicId/opinions/:opinionId/comments/:com
   res.json(result.comment);
 });
 
+// 댓글 삭제
+app.delete('/api/workspaces/:id/topics/:topicId/opinions/:opinionId/comments/:commentId', (req, res) => {
+  const result = store.deleteComment(req.params.id, req.params.topicId, req.params.opinionId, req.params.commentId);
+  if (!result) return notFound(res, '토픽/의견/댓글');
+  broadcast(req.params.id, {
+    type: 'comment_deleted',
+    topicId: req.params.topicId,
+    opinionId: req.params.opinionId,
+    commentId: req.params.commentId,
+  });
+  res.json({ ok: true });
+});
+
 // 의견 삭제
 app.delete('/api/workspaces/:id/topics/:topicId/opinions/:opinionId', (req, res) => {
   const topic = store.deleteOpinion(req.params.id, req.params.topicId, req.params.opinionId);

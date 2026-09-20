@@ -180,8 +180,8 @@ function handleEvent(event) {
       mergeTopic(event.topic);
       if (event.opinion.authorId !== state.me?.id) {
         toast(`💬 ${nameOf(event.opinion.authorId)}님이 "${event.topic.title}"에 의견을 남겼습니다.`, true);
-        // 내가 참여(멤버)한 토픽이면 알림에 추가
-        maybeNotify(event.topic, `💬 ${nameOf(event.opinion.authorId)}님의 새 의견`, event.topicId);
+        // 내가 참여(멤버)한 토픽이면 알림에 추가 (출처: 의견)
+        maybeNotify(event.topic, `💬 ${nameOf(event.opinion.authorId)}님의 새 의견`, event.topicId, { srcType: 'opinion', srcId: event.opinion.id });
       }
       renderCanvas();
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
@@ -193,7 +193,7 @@ function handleEvent(event) {
       if (op && !op.comments.find((c) => c.id === event.comment.id)) op.comments.push(event.comment);
       if (event.comment.authorId !== state.me?.id) {
         toast(`↩️ ${nameOf(event.comment.authorId)}님의 답글`);
-        if (topic) maybeNotify(topic, `↩️ ${nameOf(event.comment.authorId)}님의 답글`, event.topicId);
+        if (topic) maybeNotify(topic, `↩️ ${nameOf(event.comment.authorId)}님의 답글`, event.topicId, { srcType: 'comment', srcId: event.comment.id });
       }
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
@@ -202,18 +202,50 @@ function handleEvent(event) {
       const ids = new Set(event.deletedIds || [event.topicId]);
       state.workspace.topics = state.workspace.topics.filter((t) => !ids.has(t.id));
       if (ids.has(state.openOpinionTopicId)) $('#op-side').classList.add('hidden');
+      // 삭제된 토픽 관련 알림 제거
+      removeNotifsByTopic(ids);
       renderCanvas();
       break;
     }
     case 'opinion_deleted': {
       mergeTopic(event.topic);
+      // 삭제된 의견의 알림을 확인 안 했어도 제거
+      removeNotif('opinion', event.opinionId);
       renderCanvas();
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
     case 'opinion_updated': {
       if (event.topic) mergeTopic(event.topic);
+      // 수정된 의견: 기존 알림을 지우고, 다른 사람의 수정이면 새 알림으로 갱신
+      if (event.opinion && event.opinion.authorId !== state.me?.id) {
+        replaceNotif(event.topic, `✏️ ${nameOf(event.opinion.authorId)}님이 의견을 수정했습니다`, event.topicId, { srcType: 'opinion', srcId: event.opinionId });
+      } else {
+        removeNotif('opinion', event.opinionId);
+      }
       renderCanvas();
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
+      break;
+    }
+    case 'comment_updated': {
+      const topic = state.workspace.topics.find((t) => t.id === event.topicId);
+      const op = topic?.opinions.find((o) => o.id === event.opinionId);
+      const cm = op?.comments.find((c) => c.id === event.comment.id);
+      if (cm) { cm.content = event.comment.content; cm.editedAt = event.comment.editedAt; }
+      if (topic && event.comment.authorId !== state.me?.id) {
+        replaceNotif(topic, `✏️ ${nameOf(event.comment.authorId)}님이 답글을 수정했습니다`, event.topicId, { srcType: 'comment', srcId: event.comment.id });
+      } else {
+        removeNotif('comment', event.comment.id);
+      }
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
+      break;
+    }
+    case 'comment_deleted': {
+      const topic = state.workspace.topics.find((t) => t.id === event.topicId);
+      const op = topic?.opinions.find((o) => o.id === event.opinionId);
+      if (op) op.comments = op.comments.filter((c) => c.id !== event.commentId);
+      // 삭제된 답글의 알림 제거 (확인 안 해도)
+      removeNotif('comment', event.commentId);
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
@@ -256,11 +288,15 @@ function renderParticipants() {
 }
 
 // ---------- 알림: 내가 참여한 토픽의 새 의견/답글 ----------
-function maybeNotify(topic, message, topicId) {
+function maybeNotify(topic, message, topicId, src) {
   // 내가 이 토픽의 멤버(참여자)일 때만 알림
   if (!topic || !topic.members?.includes(state.me?.id)) return;
   // 이미 확인(읽은)한 알림은 보관하지 않는다 — 안 읽은 알림만 유지
   state.notifications = state.notifications.filter((n) => !n.read);
+  // 같은 출처(같은 의견/답글)의 기존 알림은 제거하고 최신으로 대체
+  if (src && src.srcId) {
+    state.notifications = state.notifications.filter((n) => !(n.srcType === src.srcType && n.srcId === src.srcId));
+  }
   state.notifications.unshift({
     id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     topicId,
@@ -268,9 +304,39 @@ function maybeNotify(topic, message, topicId) {
     message,
     at: new Date().toISOString(),
     read: false,
+    srcType: src?.srcType || null,
+    srcId: src?.srcId || null,
   });
   if (state.notifications.length > 30) state.notifications.length = 30;
   updateBell();
+  // 드롭다운이 열려 있으면 목록도 즉시 갱신
+  if (!$('#noti-dropdown')?.classList.contains('hidden')) renderNotiList();
+}
+
+// 특정 출처(의견/답글)의 알림을 수정된 내용으로 교체 (이전 내용은 제거)
+function replaceNotif(topic, message, topicId, src) {
+  // 기존 출처 알림 제거 후 새로 추가 (maybeNotify가 동일 출처를 정리함)
+  maybeNotify(topic, message, topicId, src);
+}
+
+// 특정 출처(의견/답글)의 알림 제거 — 확인 여부와 무관
+function removeNotif(srcType, srcId) {
+  const before = state.notifications.length;
+  state.notifications = state.notifications.filter((n) => !(n.srcType === srcType && n.srcId === srcId));
+  if (state.notifications.length !== before) {
+    updateBell();
+    if (!$('#noti-dropdown')?.classList.contains('hidden')) renderNotiList();
+  }
+}
+
+// 삭제된 토픽들에 속한 알림 제거
+function removeNotifsByTopic(topicIdSet) {
+  const before = state.notifications.length;
+  state.notifications = state.notifications.filter((n) => !topicIdSet.has(n.topicId));
+  if (state.notifications.length !== before) {
+    updateBell();
+    if (!$('#noti-dropdown')?.classList.contains('hidden')) renderNotiList();
+  }
 }
 
 // 종 아이콘 뱃지(안 읽은 개수) 갱신
