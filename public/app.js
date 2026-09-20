@@ -9,8 +9,9 @@ const state = {
   workspace: null,
   me: null,
   selectedTopicId: null,
+  openOpinionTopicId: null,
   socket: null,
-  view: { x: 0, y: 0 }, // 캔버스 패닝 오프셋
+  view: { x: 0, y: 0, scale: 1 }, // 캔버스 패닝 오프셋 + 확대/축소 배율
 };
 
 const AVATAR_COLORS = ['#6b5cff', '#22a06b', '#f0a020', '#e0563f', '#0ea5e9', '#a855f7', '#ec4899'];
@@ -39,6 +40,11 @@ const api = {
   },
   async get(path) {
     const res = await fetch(path);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    return res.json();
+  },
+  async del(path) {
+    const res = await fetch(path, { method: 'DELETE' });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     return res.json();
   },
@@ -138,7 +144,6 @@ function handleEvent(event) {
     case 'topic_updated':
       mergeTopic(event.topic);
       renderCanvas();
-      if (state.selectedTopicId === event.topic.id) renderDetail();
       break;
     case 'opinion_added': {
       mergeTopic(event.topic);
@@ -146,7 +151,7 @@ function handleEvent(event) {
         toast(`💬 ${nameOf(event.opinion.authorId)}님이 "${event.topic.title}"에 의견을 남겼습니다.`, true);
       }
       renderCanvas();
-      if (state.selectedTopicId === event.topicId) renderDetail();
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
     case 'comment_added': {
@@ -154,7 +159,20 @@ function handleEvent(event) {
       const op = topic?.opinions.find((o) => o.id === event.opinionId);
       if (op && !op.comments.find((c) => c.id === event.comment.id)) op.comments.push(event.comment);
       if (event.comment.authorId !== state.me?.id) toast(`↩️ ${nameOf(event.comment.authorId)}님의 코멘트`);
-      if (state.selectedTopicId === event.topicId) renderDetail();
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
+      break;
+    }
+    case 'topic_deleted': {
+      const ids = new Set(event.deletedIds || [event.topicId]);
+      state.workspace.topics = state.workspace.topics.filter((t) => !ids.has(t.id));
+      if (ids.has(state.openOpinionTopicId)) $('#op-side').classList.add('hidden');
+      renderCanvas();
+      break;
+    }
+    case 'opinion_deleted': {
+      mergeTopic(event.topic);
+      renderCanvas();
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
   }
@@ -195,7 +213,29 @@ function renderParticipants() {
 }
 
 // ---------- 렌더링: Miro 스타일 캔버스 ----------
-const NODE_SIZE = 116; // 원형 노드 지름
+// 토픽 깊이(루트=0) 계산
+function topicDepth(topic, byId) {
+  let d = 0, cur = topic;
+  const guard = new Set();
+  while (cur && cur.parentId && !guard.has(cur.id)) {
+    guard.add(cur.id);
+    cur = byId.get(cur.parentId);
+    d += 1;
+  }
+  return d;
+}
+
+// 깊이에 따른 타원 노드 크기 (최상위가 가장 크고 하위로 갈수록 작아짐)
+function topicSize(depth) {
+  const w = Math.max(120, 210 - depth * 34);
+  const h = Math.max(70, 120 - depth * 18);
+  return { w, h };
+}
+
+function centerOf(t, byId) {
+  const { w, h } = topicSize(topicDepth(t, byId));
+  return { cx: (t.x || 0) + w / 2, cy: (t.y || 0) + h / 2, w, h };
+}
 
 function renderCanvas() {
   const nodesLayer = $('#nodes');
@@ -204,52 +244,61 @@ function renderCanvas() {
   edges.innerHTML = '';
 
   const topics = state.workspace.topics;
-  const posById = new Map(topics.map((t) => [t.id, t]));
-
-  // 엣지 (부모-자식 곡선)
+  const byId = new Map(topics.map((t) => [t.id, t]));
   const svgNS = 'http://www.w3.org/2000/svg';
   let maxX = 0, maxY = 0;
+
+  // --- 토픽 부모-자식 엣지 ---
   for (const t of topics) {
-    maxX = Math.max(maxX, (t.x || 0) + 300);
-    maxY = Math.max(maxY, (t.y || 0) + 300);
+    const c = centerOf(t, byId);
+    maxX = Math.max(maxX, (t.x || 0) + c.w + 300);
+    maxY = Math.max(maxY, (t.y || 0) + c.h + 300);
     if (!t.parentId) continue;
-    const p = posById.get(t.parentId);
+    const p = byId.get(t.parentId);
     if (!p) continue;
-    const x1 = (p.x || 0) + NODE_SIZE / 2;
-    const y1 = (p.y || 0) + NODE_SIZE / 2;
-    const x2 = (t.x || 0) + NODE_SIZE / 2;
-    const y2 = (t.y || 0) + NODE_SIZE / 2;
-    const mx = (x1 + x2) / 2;
+    const pc = centerOf(p, byId);
+    const mx = (pc.cx + c.cx) / 2;
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('class', 'edge');
-    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    path.setAttribute('d', `M ${pc.cx} ${pc.cy} C ${mx} ${pc.cy}, ${mx} ${c.cy}, ${c.cx} ${c.cy}`);
     edges.append(path);
   }
+
   edges.setAttribute('width', maxX + 200);
   edges.setAttribute('height', maxY + 200);
 
   if (topics.length === 0) {
-    nodesLayer.append(
-      el('div', { class: 'empty-hint' }, '아직 안건이 없습니다. 왼쪽에서 최상위 안건을 추가하세요.'),
-    );
+    nodesLayer.append(el('div', { class: 'empty-hint' }, '아직 안건이 없습니다. 왼쪽에서 최상위 안건을 추가하세요.'));
   }
 
-  // 노드 (원형)
+  // --- 토픽 노드 (계층적 타원형) ---
   for (const t of topics) {
+    const depth = topicDepth(t, byId);
+    const { w, h } = topicSize(depth);
     const node = el('div', {
-      class: `node ${t.status}`,
-      style: `left:${t.x || 0}px; top:${t.y || 0}px; width:${NODE_SIZE}px; height:${NODE_SIZE}px; --node-color:${t.color || '#6b5cff'}`,
+      class: `node depth-${Math.min(depth, 3)} ${t.status}`,
+      style: `left:${t.x || 0}px; top:${t.y || 0}px; width:${w}px; height:${h}px; --node-color:${t.color || '#6b5cff'}`,
       'data-id': t.id,
     });
-
-    if (t.imageUrl) {
-      node.append(el('div', { class: 'node-img', style: `background-image:url('${t.imageUrl}')` }));
-    }
-    const inner = el('div', { class: 'node-inner' }, [
+    if (t.imageUrl) node.append(el('div', { class: 'node-img', style: `background-image:url('${t.imageUrl}')` }));
+    node.append(el('div', { class: 'node-inner' }, [
       el('div', { class: 'node-title' }, (t.status === 'decided' ? '✅ ' : '') + t.title),
       el('div', { class: 'node-meta' }, `👤${t.members.length} 💬${t.opinions.length} ✔${t.checks.length}/${t.members.length}`),
-    ]);
-    node.append(inner);
+    ]));
+    // 삭제 버튼 (hover 시 표시)
+    node.append(el('button', {
+      class: 'node-del',
+      title: '토픽 삭제',
+      onpointerdown: (e) => e.stopPropagation(),
+      onclick: (e) => { e.stopPropagation(); deleteTopic(t); },
+    }, '✕'));
+    // 의견 보기 버튼 (hover 시 표시) → 오른쪽 사이드 패널에 의견 카드 표시
+    node.append(el('button', {
+      class: 'node-op-btn',
+      title: '의견 보기',
+      onpointerdown: (e) => e.stopPropagation(),
+      onclick: (e) => { e.stopPropagation(); openOpinionSide(t.id); },
+    }, `💬 의견 ${t.opinions.length}`));
 
     makeDraggable(node, t);
     nodesLayer.append(node);
@@ -261,7 +310,34 @@ function renderCanvas() {
 // 캔버스 패닝 적용
 function applyView() {
   const vp = $('#viewport');
-  if (vp) vp.style.transform = `translate(${state.view.x}px, ${state.view.y}px)`;
+  if (vp) vp.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+  const ind = $('#zoom-indicator');
+  if (ind) ind.textContent = Math.round(state.view.scale * 100) + '%';
+}
+
+const MIN_SCALE = 0.3, MAX_SCALE = 2.5;
+
+// 특정 화면 좌표(cx, cy)를 기준점으로 줌 (마우스 커서 위치 유지)
+function zoomAt(cx, cy, factor) {
+  const canvas = $('#canvas');
+  const rect = canvas.getBoundingClientRect();
+  const px = cx - rect.left;
+  const py = cy - rect.top;
+  const oldScale = state.view.scale;
+  let newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, oldScale * factor));
+  if (newScale === oldScale) return;
+  // 커서 아래 지점이 고정되도록 오프셋 보정
+  state.view.x = px - ((px - state.view.x) / oldScale) * newScale;
+  state.view.y = py - ((py - state.view.y) / oldScale) * newScale;
+  state.view.scale = newScale;
+  applyView();
+}
+
+// 화면 중앙 기준 줌 (버튼용)
+function zoomByButton(factor) {
+  const canvas = $('#canvas');
+  const rect = canvas.getBoundingClientRect();
+  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
 }
 
 // 노드 드래그 (이동) + 클릭(상세) 구분
@@ -280,14 +356,15 @@ function makeDraggable(node, topic) {
     window.addEventListener('pointerup', onUp, { once: true });
   };
   const onMove = (e) => {
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    // 줌 배율을 반영해 실제 캔버스 좌표로 이동량 환산
+    const dx = (e.clientX - startX) / state.view.scale;
+    const dy = (e.clientY - startY) / state.view.scale;
+    if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 3) moved = true;
     topic.x = origX + dx;
     topic.y = origY + dy;
-    node.style.left = topic.x + 'px';
-    node.style.top = topic.y + 'px';
-    renderEdgesOnly();
+    // 위치 변경을 캔버스 전체에 반영 (연결선·의견 노드 동기화).
+    // 노드 DOM이 교체되어도 포인터 추적은 window에 걸려 있어 드래그가 유지된다.
+    renderCanvas();
   };
   const onUp = async () => {
     node.classList.remove('dragging');
@@ -303,30 +380,45 @@ function makeDraggable(node, topic) {
         /* ignore */
       }
     } else {
-      selectTopic(topic.id); // 이동 없으면 클릭으로 간주
+      openTopicPage(topic.id); // 이동 없으면 클릭 → 문서 페이지로 이동
     }
   };
   node.addEventListener('pointerdown', onDown);
 }
 
-// 드래그 중 엣지만 다시 그려 성능 확보
-function renderEdgesOnly() {
-  const edges = $('#edges');
-  const topics = state.workspace.topics;
-  const posById = new Map(topics.map((t) => [t.id, t]));
-  edges.innerHTML = '';
-  const svgNS = 'http://www.w3.org/2000/svg';
-  for (const t of topics) {
-    if (!t.parentId) continue;
-    const p = posById.get(t.parentId);
-    if (!p) continue;
-    const x1 = (p.x || 0) + NODE_SIZE / 2, y1 = (p.y || 0) + NODE_SIZE / 2;
-    const x2 = (t.x || 0) + NODE_SIZE / 2, y2 = (t.y || 0) + NODE_SIZE / 2;
-    const mx = (x1 + x2) / 2;
-    const path = document.createElementNS(svgNS, 'path');
-    path.setAttribute('class', 'edge');
-    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
-    edges.append(path);
+// 토픽 문서 페이지로 이동 (Notion 스타일 상세/문서 편집)
+function openTopicPage(topicId) {
+  location.href = `/topic.html?ws=${state.workspace.id}&topic=${topicId}`;
+}
+
+// 토픽 삭제 (하위 토픽 포함)
+async function deleteTopic(topic) {
+  const children = state.workspace.topics.filter((t) => t.parentId === topic.id);
+  const msg = children.length
+    ? `"${topic.title}" 토픽과 하위 토픽 ${children.length}개 이상을 모두 삭제할까요?`
+    : `"${topic.title}" 토픽을 삭제할까요?`;
+  if (!confirm(msg)) return;
+  try {
+    const { deletedIds } = await api.del(`/api/workspaces/${state.workspace.id}/topics/${topic.id}`);
+    const ids = new Set(deletedIds);
+    state.workspace.topics = state.workspace.topics.filter((t) => !ids.has(t.id));
+    renderCanvas();
+    toast('토픽을 삭제했습니다.');
+  } catch (err) {
+    toast('삭제 실패: ' + err.message);
+  }
+}
+
+// 의견 삭제
+async function deleteOpinion(topicId, opinionId) {
+  if (!confirm('이 의견을 삭제할까요?')) return;
+  try {
+    const topic = await api.del(`/api/workspaces/${state.workspace.id}/topics/${topicId}/opinions/${opinionId}`);
+    mergeTopic(topic);
+    renderCanvas();
+    toast('의견을 삭제했습니다.');
+  } catch (err) {
+    toast('삭제 실패: ' + err.message);
   }
 }
 
@@ -351,196 +443,58 @@ function setupCanvasPan() {
     panning = false;
     canvas.classList.remove('panning');
   });
+
+  // 마우스 휠로 확대/축소 (커서 위치 기준)
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    zoomAt(e.clientX, e.clientY, factor);
+  }, { passive: false });
 }
 
-// ---------- 렌더링: 상세 패널 ----------
-function selectTopic(topicId) {
-  state.selectedTopicId = topicId;
-  $('#detail').classList.remove('hidden');
-  renderDetail();
+// ---------- 의견 사이드 패널 (메인 캔버스) ----------
+// 토픽의 "의견 보기" 버튼을 누르면 오른쪽에서 의견 카드가 내려온다. (읽기 전용 요약)
+function openOpinionSide(topicId) {
+  const topic = state.workspace.topics.find((t) => t.id === topicId);
+  if (!topic) return;
+  state.openOpinionTopicId = topicId;
+  const side = $('#op-side');
+  side.classList.remove('hidden');
+  $('#op-side-title').textContent = topic.title;
+  $('#op-side-sub').textContent = `${topic.status === 'decided' ? '✅ 완료' : '🕓 논의 중'} · 의견 ${topic.opinions.length}개`;
+  $('#btn-open-topic').onclick = () => openTopicPage(topicId);
+  renderOpinionSide();
 }
 
-function renderDetail() {
-  const topic = state.workspace.topics.find((t) => t.id === state.selectedTopicId);
-  if (!topic) {
-    $('#detail').classList.add('hidden');
-    return;
-  }
-  const body = $('#detail-body');
+function renderOpinionSide() {
+  const topic = state.workspace.topics.find((t) => t.id === state.openOpinionTopicId);
+  const body = $('#op-side-body');
+  if (!topic) { $('#op-side').classList.add('hidden'); return; }
+  $('#op-side-sub').textContent = `${topic.status === 'decided' ? '✅ 완료' : '🕓 논의 중'} · 의견 ${topic.opinions.length}개`;
   body.innerHTML = '';
-
-  body.append(el('h2', {}, topic.title));
-  body.append(
-    el('span', { class: `status-badge ${topic.status}` }, topic.status === 'decided' ? '✅ 완료' : '🕓 논의 중'),
-  );
-
-  const isMember = topic.members.includes(state.me.id);
-
-  // --- 꾸미기: 색상 + 사진 ---
-  body.append(el('div', { class: 'section-title' }, '노드 꾸미기 (색상 · 사진)'));
-  const palette = el('div', { class: 'palette' });
-  for (const c of NODE_COLORS) {
-    palette.append(
-      el('button', {
-        class: `swatch ${topic.color === c ? 'active' : ''}`,
-        style: `background:${c}`,
-        title: c,
-        onclick: () => updateTopicStyle(topic.id, { color: c }),
-      }),
-    );
+  if (topic.opinions.length === 0) {
+    body.append(el('p', { class: 'muted', style: 'font-size:13px' }, '아직 의견이 없습니다. 토픽 페이지에서 의견을 남겨보세요.'));
   }
-  body.append(palette);
-  const photoRow = el('div', { class: 'btn-row' }, [
-    el('label', { class: 'file-label' }, [
-      '🖼️ 사진 넣기',
-      el('input', {
-        type: 'file',
-        accept: 'image/*',
-        style: 'display:none',
-        onchange: (e) => onNodeImagePick(topic.id, e.target.files[0]),
-      }),
-    ]),
-    topic.imageUrl
-      ? el('button', { class: 'ghost', onclick: () => updateTopicStyle(topic.id, { imageUrl: null }) }, '사진 제거')
-      : null,
-  ]);
-  body.append(photoRow);
-
-  // --- 참여 멤버 + 찬성 투표 상태 ---
-  body.append(el('div', { class: 'section-title' }, '참여자 / 찬성 투표'));
-  const chips = el('div', { class: 'member-chips' });
-  for (const m of topic.members) {
-    const checked = topic.checks.includes(m);
-    chips.append(el('span', { class: `chip ${checked ? 'checked' : ''}` }, [checked ? '✔ ' : '', nameOf(m)]));
-  }
-  if (topic.members.length === 0) chips.append(el('span', { class: 'chip' }, '아직 참여자 없음'));
-  body.append(chips);
-
-  const btnRow = el('div', { class: 'btn-row' });
-  if (isMember) {
-    btnRow.append(
-      el('button', { class: 'ghost', onclick: () => leaveTopic(topic.id) }, '토픽 나가기'),
-      el(
-        'button',
-        { onclick: () => toggleCheck(topic.id) },
-        topic.checks.includes(state.me.id) ? '찬성 취소' : '찬성 투표 ✔',
-      ),
-    );
-  } else {
-    btnRow.append(el('button', { onclick: () => joinTopic(topic.id) }, '이 토픽에 참여하기'));
-  }
-  body.append(btnRow);
-
-  // --- 하위 토픽 + LLM 추천 ---
-  body.append(el('div', { class: 'section-title' }, '하위 토픽'));
-  const subInput = el('input', { placeholder: '하위 토픽 제목', id: 'sub-topic-input' });
-  const subRow = el('div', { class: 'btn-row' }, [
-    el('button', { onclick: () => addSubtopic(topic.id) }, '추가'),
-    el('button', { class: 'ghost', onclick: () => suggestSubtopics(topic.id) }, '🤖 LLM 추천'),
-  ]);
-  body.append(subInput, subRow, el('div', { id: 'suggest-target' }));
-
-  // --- 의견 목록 ---
-  body.append(el('div', { class: 'section-title' }, `의견 (${topic.opinions.length})`));
-  for (const op of topic.opinions) body.append(renderOpinion(topic, op));
-
-  // --- 의견 작성 (파일 첨부 포함) ---
-  if (isMember) {
-    const ta = el('textarea', { placeholder: '의견을 입력하세요...', id: 'opinion-input' });
-    const fileInput = el('input', { type: 'file', multiple: 'true', id: 'opinion-files', style: 'display:none' });
-    const fileList = el('div', { class: 'attach-preview', id: 'attach-preview' });
-    fileInput.addEventListener('change', () => renderAttachPreview(fileInput, fileList));
-    const form = el('div', { class: 'opinion-form' }, [
-      el('div', { style: 'flex:1' }, [
-        ta,
-        fileList,
-        el('div', { class: 'btn-row' }, [
-          el('label', { class: 'file-label' }, ['📎 파일/문서 첨부', fileInput]),
-          el('button', { class: 'wide', onclick: () => addOpinion(topic.id, fileInput) }, '의견 등록'),
-        ]),
-      ]),
-    ]);
-    body.append(form);
-  } else {
-    body.append(el('p', { class: 'muted', style: 'font-size:13px' }, '의견/파일을 올리려면 먼저 토픽에 참여하세요.'));
-  }
-}
-
-function renderAttachPreview(fileInput, container) {
-  container.innerHTML = '';
-  for (const f of fileInput.files) {
-    container.append(el('span', { class: 'attach-chip' }, `${f.name} (${fmtSize(f.size)})`));
-  }
-}
-
-function renderOpinion(topic, op) {
-  const wrap = el('div', { class: 'opinion' });
-  wrap.append(
-    el('div', { class: 'op-head' }, [
-      el('span', {
-        class: 'avatar sm',
-        style: `background:${colorFor(op.authorId)}`,
-      }, initials(nameOf(op.authorId))),
+  topic.opinions.forEach((op, i) => {
+    const card = el('div', { class: 'op-slide-card', style: `--i:${i}` });
+    card.append(el('div', { class: 'op-slide-head' }, [
+      el('span', { class: 'avatar sm', style: `background:${colorFor(op.authorId)}` }, initials(nameOf(op.authorId))),
       el('span', { class: 'author' }, nameOf(op.authorId)),
       el('span', { class: 'time' }, new Date(op.createdAt).toLocaleString('ko-KR')),
-    ]),
-  );
-  if (op.content) wrap.append(el('div', { class: 'op-body' }, op.content));
-
-  // 첨부파일
-  if (op.attachments && op.attachments.length) {
-    const at = el('div', { class: 'attachments' });
-    for (const a of op.attachments) {
-      const isImg = (a.mime || '').startsWith('image/');
-      if (isImg) {
-        at.append(
-          el('a', { href: a.url, target: '_blank', class: 'attach-img' }, [
-            el('img', { src: a.url, alt: a.name }),
-          ]),
-        );
-      } else {
-        at.append(
-          el('a', { href: a.url, target: '_blank', download: a.name, class: 'attach-file' }, [
-            el('span', { class: 'file-ico' }, '📄'),
-            el('span', {}, `${a.name}`),
-            el('span', { class: 'file-size' }, fmtSize(a.size)),
-          ]),
-        );
+    ]));
+    if (op.title) card.append(el('div', { class: 'op-slide-title' }, op.title));
+    if (op.content) card.append(el('div', { class: 'op-slide-body', html: renderMarkdown(op.content) }));
+    if (op.attachments?.length) {
+      const at = el('div', { class: 'attachments' });
+      for (const a of op.attachments) {
+        if ((a.mime || '').startsWith('image/')) at.append(el('a', { href: a.url, target: '_blank', class: 'attach-img' }, [el('img', { src: a.url, alt: a.name })]));
+        else at.append(el('a', { href: a.url, target: '_blank', download: a.name, class: 'attach-file' }, [el('span', {}, '📄'), el('span', {}, a.name), el('span', { class: 'file-size' }, fmtSize(a.size))]));
       }
+      card.append(at);
     }
-    wrap.append(at);
-  }
-
-  // 코멘트
-  if (op.comments.length) {
-    const cwrap = el('div', { class: 'comments' });
-    for (const c of op.comments) {
-      cwrap.append(el('div', { class: 'comment' }, [el('span', { class: 'author' }, nameOf(c.authorId)), c.content]));
-    }
-    wrap.append(cwrap);
-  }
-
-  // 코멘트 작성
-  if (topic.members.includes(state.me.id)) {
-    const input = el('input', { placeholder: '코멘트 달기...' });
-    const form = el('div', { class: 'comment-form' }, [
-      input,
-      el('button', {
-        class: 'mini',
-        onclick: async () => {
-          const content = input.value.trim();
-          if (!content) return;
-          await api.post(
-            `/api/workspaces/${state.workspace.id}/topics/${topic.id}/opinions/${op.id}/comments`,
-            { authorId: state.me.id, content },
-          );
-          input.value = '';
-        },
-      }, '등록'),
-    ]);
-    wrap.append(form);
-  }
-  return wrap;
+    if (op.comments.length) card.append(el('div', { class: 'op-slide-replies' }, `💬 답글 ${op.comments.length}`));
+    body.append(card);
+  });
 }
 
 // ---------- 파일 업로드 ----------
@@ -745,9 +699,9 @@ $('#btn-create-ws').addEventListener('click', createWorkspace);
 $('#btn-join-ws').addEventListener('click', () => joinWorkspace());
 $('#btn-add-root-topic').addEventListener('click', addRootTopic);
 $('#btn-summary').addEventListener('click', showSummary);
-$('#btn-close-detail').addEventListener('click', () => {
-  state.selectedTopicId = null;
-  $('#detail').classList.add('hidden');
+$('#btn-close-opside').addEventListener('click', () => {
+  state.openOpinionTopicId = null;
+  $('#op-side').classList.add('hidden');
 });
 $('#btn-close-summary').addEventListener('click', () => $('#summary-modal').classList.add('hidden'));
 $('#btn-copy-link').addEventListener('click', async () => {
@@ -759,9 +713,11 @@ $('#btn-copy-link').addEventListener('click', async () => {
   }
 });
 $('#btn-reset-view').addEventListener('click', () => {
-  state.view = { x: 0, y: 0 };
+  state.view = { x: 0, y: 0, scale: 1 };
   applyView();
 });
+$('#btn-zoom-in')?.addEventListener('click', () => zoomByButton(1.2));
+$('#btn-zoom-out')?.addEventListener('click', () => zoomByButton(1 / 1.2));
 $('#btn-invite-join').addEventListener('click', () => {
   const name = $('#invite-name').value.trim();
   if (!name) return toast('이름을 입력하세요.');

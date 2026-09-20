@@ -75,6 +75,11 @@
           <span class="legend">
             <em class="dot open"></em> 논의 중
             <em class="dot decided"></em> 완료
+            <span class="zoom-controls">
+              <button id="btn-zoom-out" class="mini" title="축소">－</button>
+              <span id="zoom-indicator" class="zoom-indicator">100%</span>
+              <button id="btn-zoom-in" class="mini" title="확대">＋</button>
+            </span>
             <button id="btn-reset-view" class="mini">화면 초기화</button>
           </span>
         </div>
@@ -86,9 +91,18 @@
         </div>
       </section>
 
-      <aside id="detail" class="detail hidden">
-        <button id="btn-close-detail" class="close">✕</button>
-        <div id="detail-body"></div>
+      <aside id="op-side" class="op-side hidden">
+        <div class="op-side-head">
+          <div>
+            <div id="op-side-title" class="op-side-title"></div>
+            <div id="op-side-sub" class="op-side-sub"></div>
+          </div>
+          <button id="btn-close-opside" class="close">✕</button>
+        </div>
+        <div id="op-side-body" class="op-side-body"></div>
+        <div class="op-side-foot">
+          <button id="btn-open-topic" class="wide">📄 토픽 페이지 열기</button>
+        </div>
       </aside>
     </main>
 

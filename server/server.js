@@ -122,13 +122,28 @@ app.post('/api/workspaces/:id/topics', async (req, res) => {
   res.status(201).json(topic);
 });
 
-// 토픽 위치/색상/사진/제목 수정 (Miro 스타일 드래그·꾸미기)
+// 토픽 단건 조회 (문서 페이지에서 사용)
+app.get('/api/workspaces/:id/topics/:topicId', (req, res) => {
+  const topic = store.getTopic(req.params.id, req.params.topicId);
+  if (!topic) return notFound(res, '토픽');
+  res.json(topic);
+});
+
+// 토픽 위치/색상/사진/제목/문서 수정 (Miro 꾸미기 + Notion 문서)
 app.patch('/api/workspaces/:id/topics/:topicId', (req, res) => {
-  const { x, y, color, imageUrl, title } = req.body || {};
-  const topic = store.updateTopic(req.params.id, req.params.topicId, { x, y, color, imageUrl, title });
+  const { x, y, color, imageUrl, title, document } = req.body || {};
+  const topic = store.updateTopic(req.params.id, req.params.topicId, { x, y, color, imageUrl, title, document });
   if (!topic) return notFound(res, '토픽');
   broadcast(req.params.id, { type: 'topic_updated', topic });
   res.json(topic);
+});
+
+// 토픽 삭제 (하위 토픽 포함 재귀 삭제)
+app.delete('/api/workspaces/:id/topics/:topicId', (req, res) => {
+  const result = store.deleteTopic(req.params.id, req.params.topicId);
+  if (!result) return notFound(res, '토픽');
+  broadcast(req.params.id, { type: 'topic_deleted', topicId: req.params.topicId, deletedIds: result.deletedIds });
+  res.json(result);
 });
 
 // 하위 토픽 참여/탈퇴 (스토리보드 5)
@@ -188,7 +203,7 @@ app.post('/api/upload', async (req, res) => {
 
 // ---------- Opinion ----------
 app.post('/api/workspaces/:id/topics/:topicId/opinions', async (req, res) => {
-  const { authorId, content, attachments } = req.body || {};
+  const { authorId, title, content, attachments } = req.body || {};
   // 파일만 첨부하고 텍스트가 비어도 허용 (문서 공유 목적)
   if (!content && !(Array.isArray(attachments) && attachments.length)) {
     return badRequest(res, 'content 또는 첨부파일이 필요합니다.');
@@ -202,6 +217,7 @@ app.post('/api/workspaces/:id/topics/:topicId/opinions', async (req, res) => {
 
   const opinion = store.addOpinion(req.params.id, req.params.topicId, {
     authorId,
+    title: title || '',
     content: content || '',
     attachments,
   });
@@ -241,6 +257,19 @@ app.post('/api/workspaces/:id/topics/:topicId/opinions/:opinionId/comments', (re
     comment: result.comment,
   });
   res.status(201).json(result.comment);
+});
+
+// 의견 삭제
+app.delete('/api/workspaces/:id/topics/:topicId/opinions/:opinionId', (req, res) => {
+  const topic = store.deleteOpinion(req.params.id, req.params.topicId, req.params.opinionId);
+  if (!topic) return notFound(res, '토픽 또는 의견');
+  broadcast(req.params.id, {
+    type: 'opinion_deleted',
+    topicId: req.params.topicId,
+    opinionId: req.params.opinionId,
+    topic,
+  });
+  res.json(topic);
 });
 
 // ---------- Check / Decision ----------

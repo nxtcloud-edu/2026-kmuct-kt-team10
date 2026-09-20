@@ -20,8 +20,8 @@ const DATA_FILE = join(DATA_DIR, 'db.json');
 
 /** @typedef {{id:string,name:string,createdAt:string,participants:Participant[],topics:Topic[]}} Workspace */
 /** @typedef {{id:string,name:string,role:'host'|'member'}} Participant */
-/** @typedef {{id:string,parentId:string|null,title:string,createdBy:string,createdAt:string,members:string[],checks:string[],status:'open'|'decided',opinions:Opinion[],x:number,y:number,color:string,imageUrl:string|null}} Topic */
-/** @typedef {{id:string,topicId:string,authorId:string,content:string,createdAt:string,comments:Comment[],attachments:Attachment[]}} Opinion */
+/** @typedef {{id:string,parentId:string|null,title:string,createdBy:string,createdAt:string,members:string[],checks:string[],status:'open'|'decided',opinions:Opinion[],x:number,y:number,color:string,imageUrl:string|null,document:string,documentUpdatedAt:string|null}} Topic */
+/** @typedef {{id:string,topicId:string,authorId:string,title:string,content:string,createdAt:string,comments:Comment[],attachments:Attachment[]}} Opinion */
 /** @typedef {{id:string,authorId:string,content:string,createdAt:string}} Comment */
 /** @typedef {{id:string,name:string,url:string,size:number,mime:string}} Attachment */
 
@@ -47,8 +47,11 @@ class Store {
             if (typeof t.y !== 'number') t.y = 140 + Math.random() * 300;
             if (!t.color) t.color = TOPIC_COLORS[Math.floor(Math.random() * TOPIC_COLORS.length)];
             if (t.imageUrl === undefined) t.imageUrl = null;
+            if (typeof t.document !== 'string') t.document = '';
+            if (t.documentUpdatedAt === undefined) t.documentUpdatedAt = null;
             for (const op of t.opinions ?? []) {
               if (!Array.isArray(op.attachments)) op.attachments = [];
+              if (typeof op.title !== 'string') op.title = '';
             }
           }
           this.workspaces.set(ws.id, ws);
@@ -159,14 +162,17 @@ class Store {
       y: typeof y === 'number' ? y : autoY,
       color: color || TOPIC_COLORS[ws.topics.length % TOPIC_COLORS.length],
       imageUrl: null,
+      // Notion 스타일 토픽 문서 (마크다운 본문)
+      document: '',
+      documentUpdatedAt: null,
     };
     ws.topics.push(topic);
     this.persist();
     return topic;
   }
 
-  // 토픽 위치/스타일 수정 (Miro 스타일 드래그·색상·사진)
-  updateTopic(wsId, topicId, { x, y, color, imageUrl, title } = {}) {
+  // 토픽 위치/스타일/문서 수정 (Miro 드래그·색상·사진 + Notion 문서)
+  updateTopic(wsId, topicId, { x, y, color, imageUrl, title, document } = {}) {
     const topic = this.getTopic(wsId, topicId);
     if (!topic) return null;
     if (typeof x === 'number') topic.x = x;
@@ -174,6 +180,10 @@ class Store {
     if (typeof color === 'string') topic.color = color;
     if (imageUrl !== undefined) topic.imageUrl = imageUrl;
     if (typeof title === 'string' && title.trim()) topic.title = title.trim();
+    if (typeof document === 'string') {
+      topic.document = document;
+      topic.documentUpdatedAt = new Date().toISOString();
+    }
     this.persist();
     return topic;
   }
@@ -184,12 +194,52 @@ class Store {
     return ws.topics.find((t) => t.id === topicId) || null;
   }
 
+  // 토픽과 그 모든 하위 토픽(자손)을 재귀적으로 삭제한다.
+  deleteTopic(wsId, topicId) {
+    const ws = this.getWorkspace(wsId);
+    if (!ws) return null;
+    const target = ws.topics.find((t) => t.id === topicId);
+    if (!target) return null;
+    // 삭제할 모든 자손 id 수집 (BFS)
+    const toDelete = new Set([topicId]);
+    let added = true;
+    while (added) {
+      added = false;
+      for (const t of ws.topics) {
+        if (t.parentId && toDelete.has(t.parentId) && !toDelete.has(t.id)) {
+          toDelete.add(t.id);
+          added = true;
+        }
+      }
+    }
+    ws.topics = ws.topics.filter((t) => !toDelete.has(t.id));
+    // 부모의 완료 상태가 바뀔 수 있으므로 재계산
+    this.recomputeDecisions(wsId);
+    this.persist();
+    return { deletedIds: [...toDelete], parentId: target.parentId };
+  }
+
+  // 의견 삭제
+  deleteOpinion(wsId, topicId, opinionId) {
+    const topic = this.getTopic(wsId, topicId);
+    if (!topic) return null;
+    const before = topic.opinions.length;
+    topic.opinions = topic.opinions.filter((o) => o.id !== opinionId);
+    if (topic.opinions.length === before) return null; // 없던 의견
+    this.recomputeDecisions(wsId);
+    this.persist();
+    return topic;
+  }
+
   // 하위 토픽에 참여할지 선택 (스토리보드 5번)
   joinTopic(wsId, topicId, participantId) {
     const topic = this.getTopic(wsId, topicId);
     if (!topic) return null;
-    if (!topic.members.includes(participantId)) {
+    if (participantId && !topic.members.includes(participantId)) {
       topic.members.push(participantId);
+      // 새 참여자는 아직 찬성 투표를 하지 않았으므로, 완료 상태였다면 해제되어야 한다.
+      // (참여자 전원 찬성 조건이 다시 충족되어야 완료됨)
+      this.recomputeDecisions(wsId);
       this.persist();
     }
     return topic;
@@ -206,7 +256,7 @@ class Store {
   }
 
   // ---- Opinion ----
-  addOpinion(wsId, topicId, { authorId, content, attachments = [] }) {
+  addOpinion(wsId, topicId, { authorId, title = '', content, attachments = [] }) {
     const topic = this.getTopic(wsId, topicId);
     if (!topic) return null;
     /** @type {Opinion} */
@@ -214,6 +264,7 @@ class Store {
       id: randomUUID(),
       topicId,
       authorId,
+      title: (title || '').trim(),
       content,
       createdAt: new Date().toISOString(),
       comments: [],
