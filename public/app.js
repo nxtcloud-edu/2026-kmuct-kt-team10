@@ -111,6 +111,35 @@ function inviteLink() {
   return `${location.origin}/?ws=${state.workspace.id}`;
 }
 
+// 클립보드 복사 (HTTPS가 아니면 navigator.clipboard가 없으므로 폴백 사용)
+async function copyToClipboard(text) {
+  // 1) 표준 Clipboard API (보안 컨텍스트: https 또는 localhost)
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* 폴백으로 진행 */
+    }
+  }
+  // 2) 폴백: 임시 textarea + execCommand('copy') — http/IP 환경에서도 대부분 동작
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- WebSocket ----------
 function connectSocket(workspaceId) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -988,11 +1017,14 @@ $('#btn-close-opside').addEventListener('click', () => {
 });
 $('#btn-close-summary').addEventListener('click', () => $('#summary-modal').classList.add('hidden'));
 $('#btn-copy-link').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(inviteLink());
+  const link = inviteLink();
+  const ok = await copyToClipboard(link);
+  if (ok) {
     toast('초대 링크를 복사했습니다. 붙여넣어 공유하세요!');
-  } catch {
-    toast('복사 실패. 링크: ' + inviteLink());
+  } else {
+    // 자동 복사가 막힌 환경: 링크를 직접 선택/복사할 수 있게 보여준다
+    toast('자동 복사가 차단됐습니다. 링크를 직접 복사하세요.');
+    window.prompt('아래 초대 링크를 복사하세요 (Ctrl+C):', link);
   }
 });
 $('#btn-reset-view').addEventListener('click', () => {
