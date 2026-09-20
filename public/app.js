@@ -202,6 +202,7 @@ function enterApp() {
   connectSocket(state.workspace.id);
   renderParticipants();
   renderCanvas();
+  updateBell();
 }
 
 // ---------- 렌더링: 참여자 ----------
@@ -229,30 +230,58 @@ function maybeNotify(topic, message, topicId) {
     topicTitle: topic.title,
     message,
     at: new Date().toISOString(),
+    read: false,
   });
   if (state.notifications.length > 30) state.notifications.length = 30;
-  renderNotifications();
+  updateBell();
 }
 
-function renderNotifications() {
-  const panel = $('#noti-panel');
+// 종 아이콘 뱃지(안 읽은 개수) 갱신
+function updateBell() {
+  const wrap = $('#noti-wrap');
+  const badge = $('#bell-badge');
+  const bell = $('#btn-bell');
+  if (!wrap) return;
+  wrap.classList.remove('hidden'); // 앱 진입 후 항상 종 표시
+  const unread = state.notifications.filter((n) => !n.read).length;
+  if (unread > 0) {
+    badge.textContent = unread > 99 ? '99+' : unread;
+    badge.classList.remove('hidden');
+    bell.classList.add('has-unread');
+  } else {
+    badge.classList.add('hidden');
+    bell.classList.remove('has-unread');
+  }
+}
+
+// 드롭다운 열기/닫기
+function toggleNotiDropdown(force) {
+  const dd = $('#noti-dropdown');
+  const willOpen = force !== undefined ? force : dd.classList.contains('hidden');
+  if (willOpen) {
+    renderNotiList();
+    dd.classList.remove('hidden');
+  } else {
+    dd.classList.add('hidden');
+  }
+}
+
+function renderNotiList() {
   const list = $('#noti-list');
-  const count = $('#noti-count');
-  if (!panel) return;
+  const empty = $('#noti-empty');
+  list.innerHTML = '';
   if (state.notifications.length === 0) {
-    panel.classList.add('hidden');
+    empty.classList.remove('hidden');
     return;
   }
-  panel.classList.remove('hidden');
-  count.textContent = state.notifications.length;
-  list.innerHTML = '';
+  empty.classList.add('hidden');
   for (const n of state.notifications) {
     const time = new Date(n.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     list.append(
       el('li', {
-        class: 'noti-item',
-        title: '클릭하면 해당 토픽으로 이동',
-        onclick: () => openOpinionSide(n.topicId), // 사이드바 바로가기(의견 보기)
+        class: `noti-item ${n.read ? 'read' : 'unread'}`,
+        title: '클릭하면 해당 토픽 위치로 이동',
+        onclick: () => onNotiClick(n),
       }, [
         el('div', { class: 'noti-msg' }, n.message),
         el('div', { class: 'noti-meta' }, `"${n.topicTitle}" · ${time}`),
@@ -261,9 +290,46 @@ function renderNotifications() {
   }
 }
 
+// 알림 클릭: 읽음 처리 + 해당 토픽 위치로 캔버스 이동 & 하이라이트
+function onNotiClick(n) {
+  n.read = true;
+  updateBell();
+  toggleNotiDropdown(false);
+  focusTopic(n.topicId);
+}
+
 function clearNotifications() {
-  state.notifications = [];
-  renderNotifications();
+  for (const n of state.notifications) n.read = true;
+  updateBell();
+  renderNotiList();
+}
+
+// 특정 토픽을 화면 중앙으로 이동시키고 잠깐 하이라이트
+function focusTopic(topicId) {
+  const t = state.workspace.topics.find((x) => x.id === topicId);
+  if (!t) return toast('해당 토픽을 찾을 수 없습니다. (삭제되었을 수 있음)');
+  const byId = new Map(state.workspace.topics.map((x) => [x.id, x]));
+  const { w, h } = topicSize(topicDepth(t, byId));
+  const canvas = $('#canvas');
+  const rect = canvas.getBoundingClientRect();
+  // 노드 중심이 캔버스 중앙에 오도록 view 오프셋 계산 (scale 반영)
+  const s = state.view.scale;
+  const nodeCx = (t.x || 0) + w / 2;
+  const nodeCy = (t.y || 0) + h / 2;
+  state.view.x = rect.width / 2 - nodeCx * s;
+  state.view.y = rect.height / 2 - nodeCy * s;
+  applyView();
+  // 렌더 후 해당 노드에 하이라이트 클래스 부여
+  renderCanvas();
+  requestAnimationFrame(() => {
+    const nodeEl = document.querySelector(`.node[data-id="${topicId}"]`);
+    if (nodeEl) {
+      nodeEl.classList.add('focus-flash');
+      setTimeout(() => nodeEl.classList.remove('focus-flash'), 1600);
+    }
+  });
+  // 의견도 바로 볼 수 있도록 사이드 패널 함께 열기
+  openOpinionSide(topicId);
 }
 
 // ---------- 렌더링: Miro 스타일 캔버스 ----------
@@ -847,6 +913,12 @@ $('#btn-add-root-topic').addEventListener('click', addRootTopic);
 $('#btn-side-add-sub').addEventListener('click', submitSubtopic);
 $('#btn-side-cancel-sub').addEventListener('click', cancelSubtopic);
 $('#btn-clear-noti')?.addEventListener('click', clearNotifications);
+// 종 아이콘: 드롭다운 토글 + 바깥 클릭 시 닫기
+$('#btn-bell')?.addEventListener('click', (e) => { e.stopPropagation(); toggleNotiDropdown(); });
+document.addEventListener('click', (e) => {
+  const wrap = $('#noti-wrap');
+  if (wrap && !wrap.contains(e.target)) toggleNotiDropdown(false);
+});
 $('#side-sub-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitSubtopic(); });
 $('#btn-summary').addEventListener('click', showSummary);
 $('#btn-close-opside').addEventListener('click', () => {

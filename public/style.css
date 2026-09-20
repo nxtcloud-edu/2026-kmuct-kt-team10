@@ -239,13 +239,46 @@ button.primary { background: var(--accent); }
 .sub-parent-label b { color: var(--accent); }
 
 /* 내 알림 패널 (사이드바) */
-.noti-panel { border: 1px solid #ffe0b2; background: #fffdf7; }
-.noti-badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 7px; margin-left: 4px; }
-.noti-list { list-style: none; margin: 0 0 8px; padding: 0; max-height: 220px; overflow-y: auto; }
-.noti-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line); margin-bottom: 6px; background: #fff; transition: border-color 0.12s; }
-.noti-item:hover { border-color: var(--accent); }
+/* 우측 상단 종 아이콘 + 알림 드롭다운 */
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+.noti-wrap { position: relative; }
+.bell-btn {
+  position: relative; background: transparent; border: none; cursor: pointer;
+  font-size: 20px; padding: 6px 8px; border-radius: 8px; line-height: 1;
+}
+.bell-btn:hover { background: var(--bg); }
+.bell-btn.has-unread { animation: bellRing 0.6s ease; }
+@keyframes bellRing { 0%,100%{transform:rotate(0)} 20%{transform:rotate(14deg)} 40%{transform:rotate(-12deg)} 60%{transform:rotate(8deg)} 80%{transform:rotate(-4deg)} }
+.bell-badge {
+  position: absolute; top: 0; right: 0;
+  background: var(--danger); color: #fff; border-radius: 999px;
+  font-size: 10px; font-weight: 700; min-width: 16px; height: 16px;
+  display: grid; place-items: center; padding: 0 4px; border: 1px solid #fff;
+}
+.noti-dropdown {
+  position: absolute; top: 42px; right: 0; width: 320px; max-height: 400px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(30,35,60,0.2); z-index: 300; overflow: hidden;
+  display: flex; flex-direction: column;
+  animation: dropIn 0.15s ease-out;
+}
+@keyframes dropIn { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.noti-dd-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 14px; }
+.noti-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.noti-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
+.noti-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; transition: background 0.12s; border-left: 3px solid transparent; }
+.noti-item:hover { background: var(--bg); }
+.noti-item.unread { background: #fff8ee; border-left-color: var(--open); }
+.noti-item.read { opacity: 0.65; }
 .noti-msg { font-size: 13px; font-weight: 600; }
 .noti-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* 알림에서 이동 시 노드 하이라이트 */
+.node.focus-flash { animation: focusFlash 1.6s ease; z-index: 20; }
+@keyframes focusFlash {
+  0%, 100% { box-shadow: var(--shadow); }
+  20%, 60% { box-shadow: 0 0 0 5px rgba(240,160,32,0.5), 0 6px 24px rgba(240,160,32,0.4); }
+}
 
 /* AI 보조 패널 / 충돌 결과 */
 .ai-panel { border: 1px solid #d9d5fb; background: linear-gradient(180deg, #f7f5ff, #fff); }
