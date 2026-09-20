@@ -50,10 +50,24 @@
             <code id="ws-id-copy" class="ws-id"></code>
           </div>
         </div>
+        <div id="noti-panel" class="panel noti-panel hidden">
+          <h3>🔔 내 알림 <span id="noti-count" class="noti-badge">0</span></h3>
+          <ul id="noti-list" class="noti-list"></ul>
+          <button id="btn-clear-noti" class="ghost mini">모두 읽음</button>
+        </div>
         <div class="panel">
           <h3>안건 추가</h3>
           <input id="new-topic-title" placeholder="새 안건/토픽 제목" />
           <button id="btn-add-root-topic" class="wide">＋ 최상위 안건 추가</button>
+        </div>
+        <div id="subtopic-panel" class="panel hidden">
+          <h3>하위 토픽 추가</h3>
+          <div class="sub-parent-label">상위: <b id="sub-parent-name"></b></div>
+          <input id="side-sub-title" placeholder="하위 토픽 제목" />
+          <div class="btn-row">
+            <button id="btn-side-add-sub" class="wide">＋ 추가</button>
+            <button id="btn-side-cancel-sub" class="ghost">취소</button>
+          </div>
         </div>
         <div class="panel">
           <button id="btn-summary" class="wide">📄 회의 정리 (LLM)</button>
@@ -115,6 +129,19 @@
         <button id="btn-close-summary" class="close">✕</button>
         <h2>회의 정리</h2>
         <div id="summary-content" class="summary-content"></div>
+      </div>
+    </div>
+
+    <!-- 유사 토픽 확인 모달 -->
+    <div id="similar-modal" class="modal hidden">
+      <div class="modal-card similar-card">
+        <h2>⚠️ 비슷한 토픽이 존재합니다</h2>
+        <p class="muted" id="similar-desc">아래 토픽과 주제가 겹칠 수 있습니다. 그래도 새로 만드시겠습니까?</p>
+        <div id="similar-list" class="similar-list"></div>
+        <div class="btn-row" style="justify-content:flex-end; margin-top:16px">
+          <button id="btn-similar-cancel" class="ghost">취소</button>
+          <button id="btn-similar-confirm" class="danger">그래도 만들기</button>
+        </div>
       </div>
     </div>
 

@@ -1,0 +1,32 @@
+# systemd 서비스 유닛 파일
+# 배치 위치: /etc/systemd/system/collab-meeting.service
+# 목적: EC2 부팅 시 자동 시작 + 크래시 시 자동 재시작으로 서버를 상시 운영한다.
+#
+# 사용법(EC2 안에서):
+#   sudo cp deploy/collab-meeting.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now collab-meeting
+#   sudo systemctl status collab-meeting
+#   sudo journalctl -u collab-meeting -f     # 로그 실시간 보기
+
+[Unit]
+Description=Collab Meeting Platform (Node.js)
+After=network.target
+
+[Service]
+Type=simple
+# 앱을 배치한 경로에 맞게 수정하세요.
+WorkingDirectory=/home/ec2-user/2026-kmuct-kt-team10
+# node 절대경로. `which node`로 확인 후 맞추세요. (nvm 사용 시 경로가 다를 수 있음)
+ExecStart=/usr/bin/node server/server.js
+Restart=always
+RestartSec=3
+# 80 포트로 직접 서빙하려면 User=root 또는 setcap 필요. 기본은 ec2-user + 3000 포트 권장.
+User=ec2-user
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# .env 파일을 쓰면 앱이 알아서 읽습니다(server/env.js). 아래로도 주입 가능:
+# EnvironmentFile=/home/ec2-user/2026-kmuct-kt-team10/.env
+
+[Install]
+WantedBy=multi-user.target

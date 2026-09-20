@@ -10,6 +10,8 @@ const state = {
   me: null,
   selectedTopicId: null,
   openOpinionTopicId: null,
+  subParentId: null,
+  notifications: [], // 내가 참여한 토픽의 새 의견/답글 알림
   socket: null,
   view: { x: 0, y: 0, scale: 1 }, // 캔버스 패닝 오프셋 + 확대/축소 배율
 };
@@ -149,6 +151,8 @@ function handleEvent(event) {
       mergeTopic(event.topic);
       if (event.opinion.authorId !== state.me?.id) {
         toast(`💬 ${nameOf(event.opinion.authorId)}님이 "${event.topic.title}"에 의견을 남겼습니다.`, true);
+        // 내가 참여(멤버)한 토픽이면 알림에 추가
+        maybeNotify(event.topic, `💬 ${nameOf(event.opinion.authorId)}님의 새 의견`, event.topicId);
       }
       renderCanvas();
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
@@ -158,7 +162,10 @@ function handleEvent(event) {
       const topic = state.workspace.topics.find((t) => t.id === event.topicId);
       const op = topic?.opinions.find((o) => o.id === event.opinionId);
       if (op && !op.comments.find((c) => c.id === event.comment.id)) op.comments.push(event.comment);
-      if (event.comment.authorId !== state.me?.id) toast(`↩️ ${nameOf(event.comment.authorId)}님의 코멘트`);
+      if (event.comment.authorId !== state.me?.id) {
+        toast(`↩️ ${nameOf(event.comment.authorId)}님의 답글`);
+        if (topic) maybeNotify(topic, `↩️ ${nameOf(event.comment.authorId)}님의 답글`, event.topicId);
+      }
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
@@ -210,6 +217,53 @@ function renderParticipants() {
       ]),
     );
   }
+}
+
+// ---------- 알림: 내가 참여한 토픽의 새 의견/답글 ----------
+function maybeNotify(topic, message, topicId) {
+  // 내가 이 토픽의 멤버(참여자)일 때만 알림
+  if (!topic || !topic.members?.includes(state.me?.id)) return;
+  state.notifications.unshift({
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    topicId,
+    topicTitle: topic.title,
+    message,
+    at: new Date().toISOString(),
+  });
+  if (state.notifications.length > 30) state.notifications.length = 30;
+  renderNotifications();
+}
+
+function renderNotifications() {
+  const panel = $('#noti-panel');
+  const list = $('#noti-list');
+  const count = $('#noti-count');
+  if (!panel) return;
+  if (state.notifications.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  count.textContent = state.notifications.length;
+  list.innerHTML = '';
+  for (const n of state.notifications) {
+    const time = new Date(n.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    list.append(
+      el('li', {
+        class: 'noti-item',
+        title: '클릭하면 해당 토픽으로 이동',
+        onclick: () => openOpinionSide(n.topicId), // 사이드바 바로가기(의견 보기)
+      }, [
+        el('div', { class: 'noti-msg' }, n.message),
+        el('div', { class: 'noti-meta' }, `"${n.topicTitle}" · ${time}`),
+      ]),
+    );
+  }
+}
+
+function clearNotifications() {
+  state.notifications = [];
+  renderNotifications();
 }
 
 // ---------- 렌더링: Miro 스타일 캔버스 ----------
@@ -281,9 +335,14 @@ function renderCanvas() {
       'data-id': t.id,
     });
     if (t.imageUrl) node.append(el('div', { class: 'node-img', style: `background-image:url('${t.imageUrl}')` }));
+    const meta = el('div', { class: 'node-meta' }, [
+      el('span', { class: 'meta-badge' }, `👤 ${t.members.length}`),
+      el('span', { class: 'meta-badge' }, `💬 ${t.opinions.length}`),
+      el('span', { class: `meta-badge ${t.members.length && t.checks.length === t.members.length ? 'done' : ''}` }, `✔ ${t.checks.length}/${t.members.length}`),
+    ]);
     node.append(el('div', { class: 'node-inner' }, [
       el('div', { class: 'node-title' }, (t.status === 'decided' ? '✅ ' : '') + t.title),
-      el('div', { class: 'node-meta' }, `👤${t.members.length} 💬${t.opinions.length} ✔${t.checks.length}/${t.members.length}`),
+      meta,
     ]));
     // 삭제 버튼 (hover 시 표시)
     node.append(el('button', {
@@ -292,13 +351,21 @@ function renderCanvas() {
       onpointerdown: (e) => e.stopPropagation(),
       onclick: (e) => { e.stopPropagation(); deleteTopic(t); },
     }, '✕'));
-    // 의견 보기 버튼 (hover 시 표시) → 오른쪽 사이드 패널에 의견 카드 표시
-    node.append(el('button', {
-      class: 'node-op-btn',
-      title: '의견 보기',
-      onpointerdown: (e) => e.stopPropagation(),
-      onclick: (e) => { e.stopPropagation(); openOpinionSide(t.id); },
-    }, `💬 의견 ${t.opinions.length}`));
+    // hover 시 하단 액션 버튼들: 의견 보기 + 하위 토픽 생성
+    node.append(el('div', { class: 'node-actions' }, [
+      el('button', {
+        class: 'node-act-btn op',
+        title: '의견 보기',
+        onpointerdown: (e) => e.stopPropagation(),
+        onclick: (e) => { e.stopPropagation(); openOpinionSide(t.id); },
+      }, `💬 ${t.opinions.length}`),
+      el('button', {
+        class: 'node-act-btn sub',
+        title: '하위 토픽 생성',
+        onpointerdown: (e) => e.stopPropagation(),
+        onclick: (e) => { e.stopPropagation(); createChildTopic(t); },
+      }, '＋ 하위'),
+    ]));
 
     makeDraggable(node, t);
     nodesLayer.append(node);
@@ -389,6 +456,83 @@ function makeDraggable(node, topic) {
 // 토픽 문서 페이지로 이동 (Notion 스타일 상세/문서 편집)
 function openTopicPage(topicId) {
   location.href = `/topic.html?ws=${state.workspace.id}&topic=${topicId}`;
+}
+
+// 하위 토픽 생성: 사이드바 패널을 열어 입력받는다.
+function createChildTopic(parent) {
+  state.subParentId = parent.id;
+  $('#subtopic-panel').classList.remove('hidden');
+  $('#sub-parent-name').textContent = parent.title;
+  const input = $('#side-sub-title');
+  input.value = '';
+  input.focus();
+}
+
+async function submitSubtopic() {
+  const parentId = state.subParentId;
+  if (!parentId) return;
+  const input = $('#side-sub-title');
+  const title = input.value.trim();
+  if (!title) return toast('하위 토픽 제목을 입력하세요.');
+  // 유사 토픽 확인 절차
+  const ok = await confirmTopicCreation(title);
+  if (!ok) return;
+  try {
+    await api.post(`/api/workspaces/${state.workspace.id}/topics`, {
+      title,
+      createdBy: state.me.id,
+      parentId,
+    });
+    toast(`하위 토픽 "${title}"을 추가했습니다.`);
+    input.value = '';
+    // 연속 추가 가능하도록 패널 유지
+  } catch (err) {
+    toast('하위 토픽 생성 실패: ' + err.message);
+  }
+}
+
+function cancelSubtopic() {
+  state.subParentId = null;
+  $('#subtopic-panel').classList.add('hidden');
+}
+
+// LLM으로 유사 토픽을 검사하고, 있으면 모달로 확인받는다.
+// 반환: true(생성 진행) / false(취소)
+async function confirmTopicCreation(title, excludeId = null) {
+  let similar = [];
+  try {
+    const r = await api.post(`/api/workspaces/${state.workspace.id}/topics/similar`, { title, excludeId });
+    similar = r.similar || [];
+  } catch {
+    // 유사 검사 실패 시에는 생성을 막지 않는다.
+    return true;
+  }
+  if (!similar.length) return true;
+
+  // 유사 토픽 목록을 보여주는 확인 모달
+  return new Promise((resolve) => {
+    const modal = $('#similar-modal');
+    const list = $('#similar-list');
+    list.innerHTML = '';
+    for (const s of similar) {
+      list.append(el('div', { class: 'similar-item' }, [
+        el('div', { class: 'similar-title' }, [
+          el('span', { class: `status-dot ${s.status || 'open'}` }),
+          s.title,
+        ]),
+        s.reason ? el('div', { class: 'similar-reason' }, s.reason) : null,
+      ]));
+    }
+    modal.classList.remove('hidden');
+
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      $('#btn-similar-confirm').onclick = null;
+      $('#btn-similar-cancel').onclick = null;
+    };
+    $('#btn-similar-confirm').onclick = () => { cleanup(); resolve(true); };
+    $('#btn-similar-cancel').onclick = () => { cleanup(); resolve(false); };
+  });
 }
 
 // 토픽 삭제 (하위 토픽 포함)
@@ -551,6 +695,8 @@ async function joinWorkspace(id, name) {
 async function addRootTopic() {
   const title = $('#new-topic-title').value.trim();
   if (!title) return;
+  const ok = await confirmTopicCreation(title);
+  if (!ok) return;
   await api.post(`/api/workspaces/${state.workspace.id}/topics`, { title, createdBy: state.me.id });
   $('#new-topic-title').value = '';
 }
@@ -698,6 +844,10 @@ async function showSummary() {
 $('#btn-create-ws').addEventListener('click', createWorkspace);
 $('#btn-join-ws').addEventListener('click', () => joinWorkspace());
 $('#btn-add-root-topic').addEventListener('click', addRootTopic);
+$('#btn-side-add-sub').addEventListener('click', submitSubtopic);
+$('#btn-side-cancel-sub').addEventListener('click', cancelSubtopic);
+$('#btn-clear-noti')?.addEventListener('click', clearNotifications);
+$('#side-sub-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitSubtopic(); });
 $('#btn-summary').addEventListener('click', showSummary);
 $('#btn-close-opside').addEventListener('click', () => {
   state.openOpinionTopicId = null;

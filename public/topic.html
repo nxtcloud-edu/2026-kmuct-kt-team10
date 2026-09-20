@@ -25,20 +25,58 @@
     </section>
 
     <main id="doc-app" class="topic-app hidden">
-      <!-- 중앙(메인): 의견 나누기 (채팅 형식) -->
+      <!-- 중앙(메인): 탭으로 문서 / 의견 구분 -->
       <section class="chat-main">
         <div class="chat-header">
           <h1 id="topic-title-main">토픽</h1>
           <span id="doc-badge" class="status-badge"></span>
         </div>
-        <div id="opinions" class="chat-stream"></div>
-        <div id="opinion-form" class="chat-composer"></div>
+        <div class="topic-tabs">
+          <button id="tab-doc" class="topic-tab">📄 정리 문서</button>
+          <button id="tab-op" class="topic-tab active">💬 의견 <span id="tab-op-count" class="tab-count">0</span></button>
+        </div>
+
+        <!-- 문서 탭 -->
+        <div id="view-doc" class="tab-view hidden">
+          <div class="doc-toolbar">
+            <button class="mini md-btn" data-md="# ">H1</button>
+            <button class="mini md-btn" data-md="## ">H2</button>
+            <button class="mini md-btn" data-md="### ">H3</button>
+            <button class="mini md-btn" data-md="- ">• 목록</button>
+            <button class="mini md-btn" data-md="- [ ] ">☑ 체크</button>
+            <button class="mini md-btn" data-md="> ">인용</button>
+            <button class="mini md-btn" data-md="**" data-wrap="**">굵게</button>
+            <button class="mini md-btn" data-md="`" data-wrap="`">코드</button>
+            <label class="file-label mini-label">🖼️ 이미지<input id="doc-img" type="file" accept="image/*" style="display:none" /></label>
+            <span id="save-state" class="save-state">저장됨</span>
+            <button id="btn-preview-toggle" class="mini">미리보기</button>
+          </div>
+          <div class="doc-editor-wrap">
+            <input id="doc-title" class="doc-title" placeholder="토픽 제목" />
+            <textarea id="doc-editor" class="doc-editor" placeholder="토픽 결론/정리 문서를 작성하세요. 마크다운 지원.&#10;&#10;# 제목&#10;- 항목&#10;- [ ] 할 일&#10;> 인용  **굵게**  `코드`"></textarea>
+            <div id="doc-preview" class="doc-preview hidden"></div>
+          </div>
+          <div class="doc-foot">
+            <span class="muted" style="font-size:12px">문서 정리 후 오른쪽에서 <b>찬성 투표</b>하면 완료 조건에 반영됩니다.</span>
+          </div>
+        </div>
+
+        <!-- 의견 탭 -->
+        <div id="view-op" class="tab-view">
+          <div id="opinions" class="chat-stream"></div>
+          <div id="opinion-form" class="chat-composer"></div>
+        </div>
       </section>
 
-      <!-- 오른쪽: 토픽 정보 / 참여·투표 / 문서 열기 -->
+      <!-- 오른쪽: 토픽 정보 / 참여·투표 -->
       <aside class="topic-side">
-        <div class="panel">
-          <button id="btn-open-doc" class="wide primary">📄 토픽 문서 작성/보기</button>
+        <div class="panel ai-panel">
+          <h3>🤖 AI 보조</h3>
+          <button id="btn-synthesize" class="wide primary">✨ AI 의견 추합·정리</button>
+          <button id="btn-cross-conflict" class="wide ghost" style="margin-top:6px">⚠️ 다른 토픽과 충돌 확인</button>
+          <button id="btn-generate-doc" class="wide" style="margin-top:6px" disabled>📝 회의 정리 (문서 생성)</button>
+          <div id="generate-doc-hint" class="muted" style="font-size:11px; margin-top:4px"></div>
+          <div id="cross-conflict-result" class="cross-result"></div>
         </div>
         <div class="panel">
           <h3>완료 조건</h3>
@@ -69,36 +107,6 @@
         </div>
       </aside>
     </main>
-
-    <!-- 문서 작성 오버레이 (오른쪽 버튼으로 열기) -->
-    <div id="doc-overlay" class="doc-overlay hidden">
-      <div class="doc-panel">
-        <div class="doc-header">
-          <input id="doc-title" class="doc-title" placeholder="토픽 제목" />
-          <button id="btn-close-doc" class="close">✕</button>
-        </div>
-        <div class="doc-toolbar">
-          <button class="mini md-btn" data-md="# ">H1</button>
-          <button class="mini md-btn" data-md="## ">H2</button>
-          <button class="mini md-btn" data-md="### ">H3</button>
-          <button class="mini md-btn" data-md="- ">• 목록</button>
-          <button class="mini md-btn" data-md="- [ ] ">☑ 체크</button>
-          <button class="mini md-btn" data-md="> ">인용</button>
-          <button class="mini md-btn" data-md="**" data-wrap="**">굵게</button>
-          <button class="mini md-btn" data-md="`" data-wrap="`">코드</button>
-          <label class="file-label mini-label">🖼️ 이미지<input id="doc-img" type="file" accept="image/*" style="display:none" /></label>
-          <span id="save-state" class="save-state">저장됨</span>
-          <button id="btn-preview-toggle" class="mini">미리보기</button>
-        </div>
-        <div class="doc-editor-wrap">
-          <textarea id="doc-editor" class="doc-editor" placeholder="토픽 결론/정리 문서를 작성하세요. 마크다운 지원.&#10;&#10;# 제목&#10;- 항목&#10;- [ ] 할 일&#10;> 인용  **굵게**  `코드`"></textarea>
-          <div id="doc-preview" class="doc-preview hidden"></div>
-        </div>
-        <div class="doc-foot">
-          <span class="muted" style="font-size:12px">문서 작성 후 오른쪽에서 <b>찬성 투표</b>하면 완료 조건에 반영됩니다.</span>
-        </div>
-      </div>
-    </div>
 
     <!-- 의견 작성 모달 (Markdown) -->
     <div id="op-modal" class="modal hidden">

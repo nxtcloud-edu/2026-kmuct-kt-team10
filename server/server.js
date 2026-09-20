@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { store } from './store.js';
-import { checkOpinions, suggestSubtopics, summarizeWorkspace, similarity, isLLMEnabled } from './llm.js';
+import { checkOpinions, suggestSubtopics, summarizeWorkspace, similarity, isLLMEnabled, synthesizeOpinions, crossTopicConflicts, findSimilarTopics, generateConclusionDoc } from './llm.js';
 import { randomUUID } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -106,6 +106,25 @@ app.post('/api/workspaces/:id/participants', (req, res) => {
 });
 
 // ---------- Topic ----------
+// 제목 유사 토픽 검색 (하위 토픽 생성 전 중복 확인용) — LLM으로 의미 기반 판단
+app.post('/api/workspaces/:id/topics/similar', async (req, res) => {
+  const ws = store.getWorkspace(req.params.id);
+  if (!ws) return notFound(res, '워크스페이스');
+  const { title, excludeId } = req.body || {};
+  if (!title || !title.trim()) return res.json({ similar: [], engine: 'none' });
+  const candidates = ws.topics
+    .filter((t) => t.id !== excludeId)
+    .map((t) => ({ id: t.id, title: t.title }));
+  if (!candidates.length) return res.json({ similar: [], engine: 'none' });
+  const result = await findSimilarTopics(title.trim(), candidates);
+  // 상태/부모 정보 보강
+  const enriched = result.similar.map((s) => {
+    const t = ws.topics.find((x) => x.id === s.id);
+    return { ...s, status: t?.status, parentId: t?.parentId };
+  });
+  res.json({ similar: enriched, engine: result.engine });
+});
+
 app.post('/api/workspaces/:id/topics', async (req, res) => {
   const { title, createdBy, parentId, x, y, color } = req.body || {};
   if (!title) return badRequest(res, 'title은 필수입니다.');
@@ -168,6 +187,60 @@ app.get('/api/workspaces/:id/topics/:topicId/suggest-subtopics', async (req, res
   const topic = store.getTopic(req.params.id, req.params.topicId);
   if (!topic) return notFound(res, '토픽');
   const result = await suggestSubtopics(topic.title, topic.opinions);
+  res.json(result);
+});
+
+// LLM: 현재 의견들을 정리·추합하여 "정리 의견"으로 의견 목록에 추가
+app.post('/api/workspaces/:id/topics/:topicId/synthesize', async (req, res) => {
+  const { authorId } = req.body || {};
+  const topic = store.getTopic(req.params.id, req.params.topicId);
+  if (!topic) return notFound(res, '토픽');
+  const result = await synthesizeOpinions(topic.title, topic.opinions);
+  // 정리 결과를 하나의 의견으로 올린다 (작성자는 요청자, 제목에 🤖 표시)
+  const opinion = store.addOpinion(req.params.id, req.params.topicId, {
+    authorId,
+    title: `🤖 AI 의견 정리 (${topic.opinions.length}건)`,
+    content: result.markdown,
+    attachments: [],
+  });
+  const updatedTopic = store.getTopic(req.params.id, req.params.topicId);
+  broadcast(req.params.id, {
+    type: 'opinion_added',
+    topicId: req.params.topicId,
+    opinion,
+    analysis: { engine: result.engine, results: [], summary: 'AI가 의견을 정리했습니다.' },
+    topic: updatedTopic,
+  });
+  res.status(201).json({ opinion, engine: result.engine });
+});
+
+// LLM: 완료된 토픽의 결론 정리 문서 생성 → 토픽 문서(document)에 저장
+app.post('/api/workspaces/:id/topics/:topicId/generate-document', async (req, res) => {
+  const ws = store.getWorkspace(req.params.id);
+  if (!ws) return notFound(res, '워크스페이스');
+  const topic = store.getTopic(req.params.id, req.params.topicId);
+  if (!topic) return notFound(res, '토픽');
+  // 완료된 토픽만 정리 문서 생성 허용 (전원 찬성 완료 상태)
+  if (topic.status !== 'decided') {
+    return badRequest(res, '아직 완료되지 않은 토픽입니다. 참여자 전원이 찬성해야 정리할 수 있습니다.');
+  }
+  const result = await generateConclusionDoc(topic, ws.participants);
+  const updated = store.updateTopic(req.params.id, req.params.topicId, { document: result.markdown });
+  broadcast(req.params.id, { type: 'topic_updated', topic: updated });
+  res.json({ document: updated.document, engine: result.engine });
+});
+
+// LLM: 다른 하위/형제 토픽 의견과의 충돌 피드백
+app.get('/api/workspaces/:id/topics/:topicId/cross-conflicts', async (req, res) => {
+  const ws = store.getWorkspace(req.params.id);
+  if (!ws) return notFound(res, '워크스페이스');
+  const topic = store.getTopic(req.params.id, req.params.topicId);
+  if (!topic) return notFound(res, '토픽');
+  // 자기 자신을 제외한, 의견이 있는 다른 토픽들과 비교
+  const others = ws.topics
+    .filter((t) => t.id !== topic.id && t.opinions.length > 0)
+    .map((t) => ({ id: t.id, title: t.title, opinions: t.opinions }));
+  const result = await crossTopicConflicts(topic, others);
   res.json(result);
 });
 

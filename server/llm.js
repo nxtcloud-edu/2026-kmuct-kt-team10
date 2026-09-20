@@ -198,6 +198,225 @@ export async function summarizeWorkspace(workspace) {
   return ruleSummarize(workspace);
 }
 
+// 새 토픽 제목이 기존 토픽들과 의미상 유사한지 LLM으로 판단한다.
+// candidates: [{ id, title }]
+export async function findSimilarTopics(newTitle, candidates) {
+  if (!newTitle || !candidates.length) return { engine: 'none', similar: [] };
+  if (OPENAI_API_KEY) {
+    try {
+      return await llmFindSimilar(newTitle, candidates);
+    } catch (err) {
+      console.error('[llm] findSimilarTopics LLM 실패, 폴백 사용:', err.message);
+    }
+  }
+  return ruleFindSimilar(newTitle, candidates);
+}
+
+function ruleFindSimilar(newTitle, candidates) {
+  const THRESHOLD = 0.4;
+  const similar = candidates
+    .map((c) => ({ ...c, score: similarity(newTitle, c.title) }))
+    .filter((c) => c.score >= THRESHOLD)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map((c) => ({ id: c.id, title: c.title, reason: `제목 유사도 ${(c.score * 100).toFixed(0)}%` }));
+  return { engine: 'rule', similar };
+}
+
+async function llmFindSimilar(newTitle, candidates) {
+  const list = candidates.map((c, i) => `${i + 1}. [${c.id}] ${c.title}`).join('\n');
+  const content = await callOpenAI(
+    [
+      {
+        role: 'system',
+        content:
+          '너는 회의 토픽 중복 검사기다. 새 토픽 제목이 기존 토픽 목록 중 "주제가 겹치거나 매우 유사한" 것이 있는지 의미 기반으로 판단해 JSON으로 답한다. ' +
+          '표현이 달라도 논의 주제가 실질적으로 같으면 유사로 본다. 전혀 다르면 빈 배열. ' +
+          '형식: {"similar":[{"id":"기존토픽id","title":"기존제목","reason":"왜 유사한지 한국어 한 문장"}]}',
+      },
+      { role: 'user', content: `새 토픽 제목: "${newTitle}"\n\n기존 토픽 목록:\n${list}` },
+    ],
+    { json: true },
+  );
+  const parsed = parseJsonLoose(content);
+  // LLM이 준 id가 실제 후보에 있는 것만 통과
+  const valid = new Set(candidates.map((c) => c.id));
+  const similar = (parsed.similar ?? [])
+    .filter((s) => valid.has(s.id))
+    .slice(0, 5)
+    .map((s) => ({ id: s.id, title: candidates.find((c) => c.id === s.id)?.title || s.title, reason: s.reason || '주제가 유사함' }));
+  return { engine: 'llm', similar };
+}
+
+// 현재 토픽의 의견들을 하나의 정리 문서(마크다운)로 추합한다.
+export async function synthesizeOpinions(topicTitle, opinions) {
+  if (OPENAI_API_KEY) {
+    try {
+      return await llmSynthesize(topicTitle, opinions);
+    } catch (err) {
+      console.error('[llm] synthesize LLM 실패, 폴백 사용:', err.message);
+    }
+  }
+  return ruleSynthesize(topicTitle, opinions);
+}
+
+function ruleSynthesize(topicTitle, opinions) {
+  if (!opinions.length) {
+    return { engine: 'rule', markdown: `# ${topicTitle} 의견 정리\n\n_아직 의견이 없습니다._` };
+  }
+  const lines = [`# ${topicTitle} 의견 정리`, '', `총 ${opinions.length}개의 의견이 제시되었습니다.`, ''];
+  // 핵심 키워드 빈도
+  const freq = new Map();
+  for (const op of opinions) for (const tok of tokenize(op.content)) freq.set(tok, (freq.get(tok) || 0) + 1);
+  const top = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+  if (top.length) lines.push('## 자주 언급된 키워드', top.map((k) => `\`${k}\``).join(', '), '');
+
+  lines.push('## 제시된 의견');
+  for (const op of opinions) {
+    const title = op.title ? `**${op.title}**` : '(제목 없음)';
+    const body = (op.content || '').replace(/\n+/g, ' ').slice(0, 120);
+    lines.push(`- ${title}: ${body}${body.length >= 120 ? '…' : ''}`);
+  }
+
+  // 상충 쌍 탐지
+  const conflicts = [];
+  for (let i = 0; i < opinions.length; i++) {
+    for (let j = i + 1; j < opinions.length; j++) {
+      const shared = sharedTokens(opinions[i].content, opinions[j].content);
+      if (shared.length && hasNegation(opinions[i].content) !== hasNegation(opinions[j].content)) {
+        conflicts.push(`"${opinions[i].title || opinions[i].content.slice(0, 20)}" ↔ "${opinions[j].title || opinions[j].content.slice(0, 20)}" (키워드: ${shared.join(', ')})`);
+      }
+    }
+  }
+  lines.push('', '## 상충 가능 지점');
+  lines.push(conflicts.length ? conflicts.map((c) => `- ⚠️ ${c}`).join('\n') : '_뚜렷한 상충이 감지되지 않았습니다._');
+  return { engine: 'rule', markdown: lines.join('\n') };
+}
+
+async function llmSynthesize(topicTitle, opinions) {
+  const list = opinions.map((o, i) => `${i + 1}. [제목:${o.title || '없음'}] ${o.content}`).join('\n');
+  const content = await callOpenAI([
+    {
+      role: 'system',
+      content:
+        '너는 회의 의견 정리 보조자다. 여러 참여자의 의견을 하나의 한국어 마크다운 문서로 추합·정리한다. ' +
+        '구성: # 제목, ## 핵심 요약, ## 주요 의견(불릿), ## 합의점, ## 상충/미해결 쟁점. 간결하게.',
+    },
+    { role: 'user', content: `토픽: ${topicTitle}\n의견 목록:\n${list || '(없음)'}` },
+  ]);
+  return { engine: 'llm', markdown: content };
+}
+
+// 완료된 토픽의 최종 결론 정리 문서를 생성한다 (의견 + 코멘트 종합).
+export async function generateConclusionDoc(topic, participants) {
+  if (OPENAI_API_KEY) {
+    try {
+      return await llmConclusionDoc(topic, participants);
+    } catch (err) {
+      console.error('[llm] generateConclusionDoc LLM 실패, 폴백 사용:', err.message);
+    }
+  }
+  return ruleConclusionDoc(topic, participants);
+}
+
+function nameById(participants, id) {
+  return participants.find((p) => p.id === id)?.name || '알 수 없음';
+}
+
+function ruleConclusionDoc(topic, participants) {
+  const lines = [`# ${topic.title} — 회의 결론 정리`, ''];
+  lines.push(`> 상태: ✅ 완료 · 참여자 전원(${topic.members.length}명) 찬성`, '');
+  lines.push('## 논의된 의견');
+  if (!topic.opinions.length) lines.push('_등록된 의견이 없습니다._');
+  for (const op of topic.opinions) {
+    const who = nameById(participants, op.authorId);
+    lines.push(`- **${op.title || '의견'}** (${who}): ${(op.content || '').replace(/\n+/g, ' ').slice(0, 140)}`);
+    for (const c of op.comments || []) lines.push(`  - ↪ ${nameById(participants, c.authorId)}: ${c.content}`);
+  }
+  lines.push('', '## 결론', '- 참여자 전원이 찬성하여 이 토픽은 완료되었습니다.', '- (필요 시 세부 실행 항목을 여기에 추가하세요.)');
+  return { engine: 'rule', markdown: lines.join('\n') };
+}
+
+async function llmConclusionDoc(topic, participants) {
+  const opText = topic.opinions
+    .map((o) => {
+      const who = nameById(participants, o.authorId);
+      const cs = (o.comments || []).map((c) => `    답글(${nameById(participants, c.authorId)}): ${c.content}`).join('\n');
+      return `- [${o.title || '의견'}] (${who}): ${o.content}${cs ? '\n' + cs : ''}`;
+    })
+    .join('\n');
+  const content = await callOpenAI([
+    {
+      role: 'system',
+      content:
+        '너는 회의록 정리 전문가다. 참여자 전원이 찬성하여 완료된 토픽의 최종 결론 문서를 한국어 마크다운으로 작성한다. ' +
+        '구성: # 토픽명 — 회의 결론, ## 핵심 결론(2~3문장), ## 합의된 내용(불릿), ## 다음 액션 아이템(담당/기한 있으면 포함), ## 참고 의견 요약. ' +
+        '의견과 답글을 근거로 실제 합의점을 도출해서 정리하라.',
+    },
+    { role: 'user', content: `토픽: ${topic.title}\n\n의견/답글:\n${opText || '(없음)'}` },
+  ]);
+  return { engine: 'llm', markdown: content };
+}
+
+// 이 토픽의 의견이 다른(형제/타) 토픽의 의견과 충돌하는지 감지한다.
+// others: [{ id, title, opinions:[{content,...}] }]
+export async function crossTopicConflicts(topic, others) {
+  if (OPENAI_API_KEY) {
+    try {
+      return await llmCrossConflicts(topic, others);
+    } catch (err) {
+      console.error('[llm] crossConflicts LLM 실패, 폴백 사용:', err.message);
+    }
+  }
+  return ruleCrossConflicts(topic, others);
+}
+
+function ruleCrossConflicts(topic, others) {
+  const findings = [];
+  for (const mine of topic.opinions) {
+    for (const other of others) {
+      for (const op of other.opinions) {
+        const shared = sharedTokens(mine.content, op.content);
+        const negDiff = hasNegation(mine.content) !== hasNegation(op.content);
+        if (shared.length >= 1 && negDiff) {
+          findings.push({
+            otherTopicId: other.id,
+            otherTopicTitle: other.title,
+            myOpinion: mine.title || mine.content.slice(0, 30),
+            otherOpinion: op.title || op.content.slice(0, 30),
+            shared,
+          });
+        }
+      }
+    }
+  }
+  const summary = findings.length
+    ? `다른 토픽과 상충 가능성이 ${findings.length}건 감지되었습니다.`
+    : '다른 토픽 의견과의 뚜렷한 충돌이 감지되지 않았습니다.';
+  return { engine: 'rule', findings, summary };
+}
+
+async function llmCrossConflicts(topic, others) {
+  const mine = topic.opinions.map((o) => `- ${o.title || ''}: ${o.content}`).join('\n');
+  const otherText = others
+    .map((o) => `[토픽:${o.title}]\n` + o.opinions.map((op) => `  - ${op.title || ''}: ${op.content}`).join('\n'))
+    .join('\n');
+  const content = await callOpenAI(
+    [
+      {
+        role: 'system',
+        content:
+          '너는 회의 토픽 간 정합성 검사기다. 현재 토픽의 의견이 다른 토픽 의견과 상충되는지 판단해 JSON으로 답한다. ' +
+          '형식: {"findings":[{"otherTopicTitle":"...","myOpinion":"...","otherOpinion":"...","reason":"한국어"}],"summary":"한국어 한 문장"}',
+      },
+      { role: 'user', content: `현재 토픽(${topic.title}) 의견:\n${mine || '(없음)'}\n\n다른 토픽들:\n${otherText || '(없음)'}` },
+    ],
+    { json: true },
+  );
+  const parsed = parseJsonLoose(content);
+  return { engine: 'llm', findings: parsed.findings ?? [], summary: parsed.summary ?? '' };
+}
+
 function participantName(workspace, id) {
   return workspace.participants.find((p) => p.id === id)?.name || '알 수 없음';
 }
@@ -272,6 +491,23 @@ async function callOpenAI(messages, { json = false } = {}) {
   return data.choices?.[0]?.message?.content ?? '';
 }
 
+// LLM이 JSON을 ```json 코드블록으로 감싸 반환하는 경우가 있어(예: Bedrock haiku),
+// 펜스를 제거하고 첫 번째 JSON 객체만 안전하게 파싱한다.
+function parseJsonLoose(content) {
+  let s = (content || '').trim();
+  // ```json ... ``` 또는 ``` ... ``` 펜스 제거
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(s);
+  if (fence) s = fence[1].trim();
+  try {
+    return JSON.parse(s);
+  } catch {
+    // 본문 중 첫 { ... } 블록만 추출해 재시도
+    const m = /\{[\s\S]*\}/.exec(s);
+    if (m) return JSON.parse(m[0]);
+    throw new Error('JSON 파싱 실패: ' + s.slice(0, 120));
+  }
+}
+
 async function llmCheckOpinions(newContent, existingOpinions) {
   const list = existingOpinions.map((o, i) => `${i + 1}. [${o.id}] ${o.content}`).join('\n');
   const content = await callOpenAI(
@@ -286,7 +522,7 @@ async function llmCheckOpinions(newContent, existingOpinions) {
     ],
     { json: true },
   );
-  const parsed = JSON.parse(content);
+  const parsed = parseJsonLoose(content);
   return { engine: 'llm', results: parsed.results ?? [], summary: parsed.summary ?? '' };
 }
 
@@ -304,7 +540,7 @@ async function llmSuggestSubtopics(topicTitle, opinions) {
     ],
     { json: true },
   );
-  const parsed = JSON.parse(content);
+  const parsed = parseJsonLoose(content);
   return { engine: 'llm', suggestions: (parsed.suggestions ?? []).slice(0, 3) };
 }
 

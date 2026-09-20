@@ -176,6 +176,9 @@ function renderDocMeta() {
   badge.textContent = t.status === 'decided' ? '✅ 완료' : '🕓 논의 중';
   $('#topic-status-top').textContent = `${state.workspace.name} · ${t.status === 'decided' ? '완료된 토픽' : '논의 중'}`;
   document.body.classList.toggle('is-decided', t.status === 'decided');
+  const cnt = $('#tab-op-count');
+  if (cnt) cnt.textContent = t.opinions.length;
+  updateGenerateDocButton();
 }
 
 function renderSidebar() {
@@ -354,6 +357,15 @@ async function addOpinion() {
 
 async function addSubtopic() {
   const input = $('#sub-title'); const title = input.value.trim(); if (!title) return;
+  // LLM 유사 토픽 확인
+  try {
+    const { similar } = await api.post(`/api/workspaces/${WS_ID}/topics/similar`, { title });
+    if (similar && similar.length) {
+      const lines = similar.map((s) => `• ${s.title}${s.reason ? ` — ${s.reason}` : ''}`).join('\n');
+      const ok = confirm(`⚠️ 비슷한 토픽이 존재합니다:\n\n${lines}\n\n그래도 "${title}" 토픽을 새로 만드시겠습니까?`);
+      if (!ok) return;
+    }
+  } catch { /* 유사 검사 실패 시 생성 진행 */ }
   await api.post(`/api/workspaces/${WS_ID}/topics`, { title, createdBy: state.me.id, parentId: TOPIC_ID });
   input.value = '';
   const ws = await api.get(`/api/workspaces/${WS_ID}`); state.workspace = ws; state.topic = ws.topics.find((t) => t.id === TOPIC_ID);
@@ -409,6 +421,78 @@ function toggleOpPreview() {
   else { pv.classList.add('hidden'); ed.classList.remove('hidden'); $('#btn-op-preview').textContent = '미리보기'; }
 }
 
+// 중앙 탭 전환 (문서 / 의견)
+function switchTab(which) {
+  const isDoc = which === 'doc';
+  $('#tab-doc').classList.toggle('active', isDoc);
+  $('#tab-op').classList.toggle('active', !isDoc);
+  $('#view-doc').classList.toggle('hidden', !isDoc);
+  $('#view-op').classList.toggle('hidden', isDoc);
+}
+
+// AI 의견 추합·정리: 현재 의견들을 LLM이 정리해 의견 페이지에 올림
+async function synthesizeOpinions() {
+  const t = state.topic;
+  if (!t.opinions.length) return toast('정리할 의견이 없습니다.');
+  toast('🤖 AI가 의견을 정리하는 중...');
+  try {
+    await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/synthesize`, { authorId: state.me.id });
+    const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`);
+    state.topic = fresh; syncTopicInWorkspace(fresh);
+    switchTab('op');
+    renderOpinions(); renderSidebar(); renderDocMeta();
+    toast('AI 정리 의견을 의견 페이지에 추가했습니다.');
+  } catch (e) { toast('정리 실패: ' + e.message); }
+}
+
+// "회의 정리" 버튼 활성화 상태 갱신: 토픽이 완료(전원 찬성)일 때만 활성
+function updateGenerateDocButton() {
+  const btn = $('#btn-generate-doc');
+  const hint = $('#generate-doc-hint');
+  if (!btn) return;
+  const decided = state.topic.status === 'decided';
+  btn.disabled = !decided;
+  hint.textContent = decided
+    ? '참여자 전원이 찬성했습니다. 정리 문서를 생성할 수 있어요.'
+    : '참여자 전원이 찬성하면 활성화됩니다.';
+}
+
+// 완료된 토픽의 결론 정리 문서를 LLM으로 생성 → 문서 탭에 표시
+async function generateConclusionDoc() {
+  if (state.topic.status !== 'decided') return toast('참여자 전원이 찬성해야 정리할 수 있습니다.');
+  toast('🤖 회의 결론을 정리하는 중...');
+  try {
+    const { document } = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/generate-document`, {});
+    state.topic.document = document;
+    syncTopicInWorkspace(state.topic);
+    $('#doc-editor').value = document;
+    switchTab('doc');
+    if (state.previewOn) { $('#doc-preview').innerHTML = renderMarkdown(document); }
+    toast('정리 문서를 생성했습니다. 문서 탭에서 확인하세요.');
+  } catch (e) { toast('문서 생성 실패: ' + e.message); }
+}
+
+// 다른 하위/형제 토픽 의견과의 충돌 확인
+async function checkCrossConflicts() {
+  const box = $('#cross-conflict-result');
+  box.innerHTML = '<div class="muted" style="font-size:12px">🤖 다른 토픽 의견과 비교 중...</div>';
+  try {
+    const { findings, summary } = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/cross-conflicts`);
+    box.innerHTML = '';
+    box.append(el('div', { class: `cross-summary ${findings.length ? 'warn' : 'ok'}` }, summary));
+    for (const f of findings) {
+      box.append(el('div', { class: 'cross-item' }, [
+        el('div', { class: 'cross-topic' }, `↔ ${f.otherTopicTitle}`),
+        el('div', { class: 'cross-detail' }, [
+          el('span', {}, `내 의견: ${f.myOpinion}`),
+          el('span', {}, `상대: ${f.otherOpinion}`),
+          f.reason ? el('span', { class: 'cross-reason' }, f.reason) : (f.shared ? el('span', { class: 'cross-reason' }, `공통 키워드: ${(f.shared || []).join(', ')}`) : null),
+        ]),
+      ]));
+    }
+  } catch (e) { box.innerHTML = `<div class="muted">확인 실패: ${e.message}</div>`; }
+}
+
 // ---------- 부트스트랩 ----------
 async function enter() {
   connectSocket();
@@ -421,9 +505,13 @@ async function enter() {
   $('#doc-title').addEventListener('input', scheduleSave);
   document.querySelectorAll('.md-btn').forEach((b) => b.addEventListener('click', () => applyMd(b)));
   $('#btn-preview-toggle').addEventListener('click', togglePreview);
-  // 문서 오버레이 열기/닫기
-  $('#btn-open-doc').addEventListener('click', () => $('#doc-overlay').classList.remove('hidden'));
-  $('#btn-close-doc').addEventListener('click', () => $('#doc-overlay').classList.add('hidden'));
+  // 탭 전환 (문서 / 의견)
+  $('#tab-doc').addEventListener('click', () => switchTab('doc'));
+  $('#tab-op').addEventListener('click', () => switchTab('op'));
+  // AI 보조
+  $('#btn-synthesize').addEventListener('click', synthesizeOpinions);
+  $('#btn-cross-conflict').addEventListener('click', checkCrossConflicts);
+  $('#btn-generate-doc').addEventListener('click', generateConclusionDoc);
   // 의견 작성 모달
   document.querySelectorAll('.md-btn2').forEach((b) => b.addEventListener('click', () => applyMd(b, '#op-input', null)));
   $('#btn-op-preview').addEventListener('click', toggleOpPreview);
@@ -458,6 +546,9 @@ async function enter() {
       location.href = `/?ws=${WS_ID}`;
     } catch (e) { toast('삭제 실패: ' + e.message); }
   });
+
+  // 완료된 토픽이면 정리 문서 탭을 먼저, 진행 중이면 의견 탭을 먼저 표시
+  switchTab(state.topic.status === 'decided' ? 'doc' : 'op');
 
   $('#doc-app').classList.remove('hidden');
 }
