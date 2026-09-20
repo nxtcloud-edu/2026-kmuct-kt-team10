@@ -119,6 +119,15 @@ function handleEvent(event) {
     renderOpinions();
     renderSidebar();
     renderDocMeta();
+  } else if (event.type === 'opinion_updated' && event.topicId === TOPIC_ID) {
+    state.topic = event.topic;
+    syncTopicInWorkspace(event.topic);
+    renderOpinions();
+  } else if (event.type === 'comment_updated' && event.topicId === TOPIC_ID) {
+    const op = state.topic.opinions.find((o) => o.id === event.opinionId);
+    const cm = op?.comments.find((c) => c.id === event.comment.id);
+    if (cm) { cm.content = event.comment.content; cm.editedAt = event.comment.editedAt; }
+    renderOpinions();
   } else if (event.type === 'topic_deleted') {
     const ids = new Set(event.deletedIds || [event.topicId]);
     if (ids.has(TOPIC_ID)) {
@@ -255,8 +264,9 @@ function renderOpinions() {
   }
 }
 
-// 의견 작성 모달 열기
+// 의견 작성 모달 열기 (새 작성)
 function openOpinionModal() {
+  state.editingOpinionId = null;
   $('#op-title').value = '';
   $('#op-input').value = '';
   $('#op-files').value = '';
@@ -264,6 +274,10 @@ function openOpinionModal() {
   $('#op-modal-preview').classList.add('hidden');
   $('#op-input').classList.remove('hidden');
   $('#btn-op-preview').textContent = '미리보기';
+  $('#btn-op-submit').textContent = '의견 업로드 ➤';
+  const fileLabel = document.querySelector('#op-modal .file-label');
+  if (fileLabel) fileLabel.style.display = '';
+  const h2 = document.querySelector('#op-modal h2'); if (h2) h2.textContent = '의견 작성';
   $('#op-modal').classList.remove('hidden');
   $('#op-title').focus();
 }
@@ -279,9 +293,12 @@ function renderOpinion(op) {
   const bubble = el('div', { class: 'chat-bubble' });
   const head = el('div', { class: 'chat-msg-head' }, [
     el('span', { class: 'author' }, nameOf(op.authorId)),
-    el('span', { class: 'time' }, new Date(op.createdAt).toLocaleString('ko-KR')),
+    el('span', { class: 'time' }, new Date(op.createdAt).toLocaleString('ko-KR') + (op.editedAt ? ' (수정됨)' : '')),
   ]);
-  if (isMine || isHost) head.append(el('button', { class: 'op-del', title: '의견 삭제', onclick: () => deleteOpinion(op.id) }, '🗑'));
+  if (isMine || isHost) {
+    head.append(el('button', { class: 'op-del', title: '의견 수정', onclick: () => startEditOpinion(op) }, '✏️'));
+    head.append(el('button', { class: 'op-del', title: '의견 삭제', onclick: () => deleteOpinion(op.id) }, '🗑'));
+  }
   bubble.append(head);
 
   if (op.title) bubble.append(el('div', { class: 'chat-msg-title' }, op.title));
@@ -299,11 +316,15 @@ function renderOpinion(op) {
   if (op.comments.length) {
     const cw = el('div', { class: 'chat-replies' });
     cw.append(el('div', { class: 'comments-label' }, `💬 답글 ${op.comments.length}`));
-    for (const c of op.comments) cw.append(el('div', { class: 'comment' }, [
-      el('span', { class: 'avatar xs', style: `background:${colorFor(c.authorId)}` }, initials(nameOf(c.authorId))),
-      el('span', { class: 'author' }, nameOf(c.authorId)),
-      el('span', { class: 'c-body' }, c.content),
-    ]));
+    for (const c of op.comments) {
+      const canEdit = c.authorId === state.me.id || state.me.role === 'host';
+      cw.append(el('div', { class: 'comment' }, [
+        el('span', { class: 'avatar xs', style: `background:${colorFor(c.authorId)}` }, initials(nameOf(c.authorId))),
+        el('span', { class: 'author' }, nameOf(c.authorId)),
+        el('span', { class: 'c-body' }, c.content + (c.editedAt ? ' (수정됨)' : '')),
+        canEdit ? el('button', { class: 'c-edit', title: '답글 수정', onclick: () => startEditComment(op, c) }, '✏️') : null,
+      ]));
+    }
     bubble.append(cw);
   }
 
@@ -333,6 +354,39 @@ async function deleteOpinion(opinionId) {
   } catch (e) { toast('삭제 실패: ' + e.message); }
 }
 
+// 의견 수정: 작성 모달을 편집 모드로 연다
+function startEditOpinion(op) {
+  state.editingOpinionId = op.id;
+  $('#op-title').value = op.title || '';
+  $('#op-input').value = op.content || '';
+  $('#op-preview').innerHTML = '';
+  $('#op-modal-preview').classList.add('hidden');
+  $('#op-input').classList.remove('hidden');
+  $('#btn-op-preview').textContent = '미리보기';
+  $('#btn-op-submit').textContent = '수정 저장 ✓';
+  // 편집 시에는 새 파일 첨부 입력은 숨김(기존 첨부 유지)
+  const fileLabel = document.querySelector('#op-modal .file-label');
+  if (fileLabel) fileLabel.style.display = 'none';
+  const h2 = document.querySelector('#op-modal h2'); if (h2) h2.textContent = '의견 수정';
+  $('#op-modal').classList.remove('hidden');
+  $('#op-title').focus();
+}
+
+// 댓글 수정 (간단히 prompt)
+async function startEditComment(op, c) {
+  const next = prompt('답글 수정:', c.content);
+  if (next == null) return;
+  const content = next.trim();
+  if (!content || content === c.content) return;
+  try {
+    await api.patch(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${op.id}/comments/${c.id}`, { content });
+    const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`);
+    state.topic = fresh; syncTopicInWorkspace(fresh);
+    renderOpinions();
+    toast('답글을 수정했습니다.');
+  } catch (e) { toast('수정 실패: ' + e.message); }
+}
+
 // ---------- 액션 ----------
 async function updateStyle(patch) { try { state.topic = await api.patch(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`, patch); syncTopicInWorkspace(state.topic); renderSidebar(); renderDocMeta(); } catch (e) { toast('수정 실패: ' + e.message); } }
 async function joinTopic() { state.topic = await api.post(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/join`, { participantId: state.me.id }); syncTopicInWorkspace(state.topic); renderSidebar(); }
@@ -342,6 +396,22 @@ async function toggleCheck() { state.topic = await api.post(`/api/workspaces/${W
 async function addOpinion() {
   const title = $('#op-title').value.trim();
   const content = $('#op-input').value.trim();
+
+  // 편집 모드: 기존 의견 수정 (PATCH)
+  if (state.editingOpinionId) {
+    if (!content) return toast('의견 본문을 입력하세요.');
+    try {
+      await api.patch(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}/opinions/${state.editingOpinionId}`, { title, content });
+      const fresh = await api.get(`/api/workspaces/${WS_ID}/topics/${TOPIC_ID}`);
+      state.topic = fresh; syncTopicInWorkspace(fresh);
+      state.editingOpinionId = null;
+      closeOpinionModal();
+      renderOpinions(); renderSidebar(); renderDocMeta();
+      toast('의견을 수정했습니다.');
+    } catch (e) { toast('수정 실패: ' + e.message); }
+    return;
+  }
+
   const fileInput = $('#op-files');
   const files = fileInput ? [...fileInput.files] : [];
   if (!content && !files.length) return toast('의견 본문 또는 파일을 입력하세요.');

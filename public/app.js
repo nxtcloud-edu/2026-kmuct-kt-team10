@@ -182,6 +182,12 @@ function handleEvent(event) {
       if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
       break;
     }
+    case 'opinion_updated': {
+      if (event.topic) mergeTopic(event.topic);
+      renderCanvas();
+      if (state.openOpinionTopicId === event.topicId) renderOpinionSide();
+      break;
+    }
   }
 }
 
@@ -393,7 +399,11 @@ function renderCanvas() {
   edges.setAttribute('height', maxY + 200);
 
   if (topics.length === 0) {
-    nodesLayer.append(el('div', { class: 'empty-hint' }, '아직 안건이 없습니다. 왼쪽에서 최상위 안건을 추가하세요.'));
+    nodesLayer.append(el('div', { class: 'empty-hint' }, [
+      el('div', { class: 'empty-title' }, '🗺️ 아직 안건이 없습니다'),
+      el('div', { class: 'empty-sub' }, '첫 안건(토픽)을 추가해 회의를 시작하세요.'),
+      el('button', { class: 'empty-add-btn', onclick: openNewTopicPrompt }, '＋ 첫 안건 추가'),
+    ]));
   }
 
   // --- 토픽 노드 (계층적 타원형) ---
@@ -422,7 +432,7 @@ function renderCanvas() {
       onpointerdown: (e) => e.stopPropagation(),
       onclick: (e) => { e.stopPropagation(); deleteTopic(t); },
     }, '✕'));
-    // hover 시 하단 액션 버튼들: 의견 보기 + 하위 토픽 생성
+    // hover 시 하단 액션 버튼들: 의견 보기 + 하위 토픽 생성 + 제목 수정
     node.append(el('div', { class: 'node-actions' }, [
       el('button', {
         class: 'node-act-btn op',
@@ -436,6 +446,12 @@ function renderCanvas() {
         onpointerdown: (e) => e.stopPropagation(),
         onclick: (e) => { e.stopPropagation(); createChildTopic(t); },
       }, '＋ 하위'),
+      el('button', {
+        class: 'node-act-btn edit',
+        title: '제목 수정',
+        onpointerdown: (e) => e.stopPropagation(),
+        onclick: (e) => { e.stopPropagation(); renameTopic(t); },
+      }, '✏️'),
     ]));
 
     makeDraggable(node, t);
@@ -770,6 +786,29 @@ async function addRootTopic() {
   if (!ok) return;
   await api.post(`/api/workspaces/${state.workspace.id}/topics`, { title, createdBy: state.me.id });
   $('#new-topic-title').value = '';
+}
+
+// 빈 캔버스에서 첫 안건 추가 (사이드바 입력창으로 포커스 유도)
+function openNewTopicPrompt() {
+  const input = $('#new-topic-title');
+  input.focus();
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  input.classList.add('pulse');
+  setTimeout(() => input.classList.remove('pulse'), 1200);
+}
+
+// 토픽 제목 수정 (캔버스 노드에서)
+async function renameTopic(topic) {
+  const next = prompt('토픽 제목 수정:', topic.title);
+  if (next == null) return;
+  const title = next.trim();
+  if (!title || title === topic.title) return;
+  try {
+    await api.patch(`/api/workspaces/${state.workspace.id}/topics/${topic.id}`, { title });
+    toast('토픽 제목을 수정했습니다.');
+  } catch (err) {
+    toast('제목 수정 실패: ' + err.message);
+  }
 }
 
 async function addSubtopic(parentId) {

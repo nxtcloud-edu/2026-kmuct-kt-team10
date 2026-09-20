@@ -332,6 +332,35 @@ app.post('/api/workspaces/:id/topics/:topicId/opinions/:opinionId/comments', (re
   res.status(201).json(result.comment);
 });
 
+// 의견 수정 (제목/본문)
+app.patch('/api/workspaces/:id/topics/:topicId/opinions/:opinionId', (req, res) => {
+  const { title, content } = req.body || {};
+  const result = store.updateOpinion(req.params.id, req.params.topicId, req.params.opinionId, { title, content });
+  if (!result) return notFound(res, '토픽 또는 의견');
+  broadcast(req.params.id, {
+    type: 'opinion_updated',
+    topicId: req.params.topicId,
+    opinionId: req.params.opinionId,
+    opinion: result.opinion,
+    topic: result.topic,
+  });
+  res.json(result.opinion);
+});
+
+// 댓글 수정 (내용)
+app.patch('/api/workspaces/:id/topics/:topicId/opinions/:opinionId/comments/:commentId', (req, res) => {
+  const { content } = req.body || {};
+  const result = store.updateComment(req.params.id, req.params.topicId, req.params.opinionId, req.params.commentId, { content });
+  if (!result) return notFound(res, '토픽/의견/댓글');
+  broadcast(req.params.id, {
+    type: 'comment_updated',
+    topicId: req.params.topicId,
+    opinionId: req.params.opinionId,
+    comment: result.comment,
+  });
+  res.json(result.comment);
+});
+
 // 의견 삭제
 app.delete('/api/workspaces/:id/topics/:topicId/opinions/:opinionId', (req, res) => {
   const topic = store.deleteOpinion(req.params.id, req.params.topicId, req.params.opinionId);

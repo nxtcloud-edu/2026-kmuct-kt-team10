@@ -294,6 +294,33 @@ class Store {
     return { topic, opinion, comment };
   }
 
+  // 의견 수정 (제목/본문)
+  updateOpinion(wsId, topicId, opinionId, { title, content }) {
+    const topic = this.getTopic(wsId, topicId);
+    if (!topic) return null;
+    const opinion = topic.opinions.find((o) => o.id === opinionId);
+    if (!opinion) return null;
+    if (typeof title === 'string') opinion.title = title.trim();
+    if (typeof content === 'string') opinion.content = content;
+    opinion.editedAt = new Date().toISOString();
+    this.persist();
+    return { topic, opinion };
+  }
+
+  // 댓글 수정 (내용)
+  updateComment(wsId, topicId, opinionId, commentId, { content }) {
+    const topic = this.getTopic(wsId, topicId);
+    if (!topic) return null;
+    const opinion = topic.opinions.find((o) => o.id === opinionId);
+    if (!opinion) return null;
+    const comment = opinion.comments.find((c) => c.id === commentId);
+    if (!comment) return null;
+    if (typeof content === 'string') comment.content = content;
+    comment.editedAt = new Date().toISOString();
+    this.persist();
+    return { topic, opinion, comment };
+  }
+
   // ---- Check / Decision ----
   toggleCheck(wsId, topicId, participantId) {
     const topic = this.getTopic(wsId, topicId);

@@ -17,13 +17,15 @@
   - 계층적 **타원형 노드**(상위 토픽이 크고 하위로 갈수록 작아짐)
   - 노드 **드래그 이동**, 빈 공간 **패닝**, **확대/축소(줌)**
   - 노드별 **색상·사진** 꾸미기
-  - 노드 hover 시 **의견 보기 / 하위 토픽 생성** 버튼
+  - 노드 hover 시 **의견 보기 / 하위 토픽 생성 / 제목 수정** 버튼
+- **빈 캔버스**에서는 **＋ 첫 안건 추가** 버튼으로 바로 시작
 - **토픽 트리**: 안건을 하위 토픽으로 계속 분해 (사이드바에서 하위 토픽 추가)
 - **토픽/의견 삭제** (토픽은 하위 트리까지 재귀 삭제)
+- **수정 지원**: 토픽 제목, 의견(제목·본문), 답글 내용 모두 편집 가능
 
 ### 의견 & 문서
 - **채팅형 의견 페이지**: "의견 추가" 버튼 → **제목 + Markdown 본문**으로 작성, 카드로 순서대로 표시
-- **답글(코멘트)**, **파일·문서·이미지 첨부**
+- **답글(코멘트)**, **파일·문서·이미지 첨부**, **의견·답글 수정**
 - **Notion 스타일 문서 탭**: 토픽별 결론 문서를 Markdown으로 작성 (자동 저장)
 - **완료 토픽은 문서 탭이 먼저** 열리고, 의견은 별도 탭에서 확인
 
@@ -140,7 +142,9 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 | `POST` | `.../topics/:topicId/check` | 찬성 투표 토글 |
 | `POST` | `.../topics/:topicId/opinions` | 의견 등록 (제목+본문+첨부) |
 | `DELETE` | `.../topics/:topicId/opinions/:opinionId` | 의견 삭제 |
+| `PATCH` | `.../topics/:topicId/opinions/:opinionId` | 의견 수정 (제목·본문) |
 | `POST` | `.../opinions/:opinionId/comments` | 답글 등록 |
+| `PATCH` | `.../opinions/:opinionId/comments/:commentId` | 답글 수정 |
 | `POST` | `/api/upload` | 파일 업로드 (base64) |
 | `GET` | `.../topics/:topicId/suggest-subtopics` | 하위 토픽 추천 (LLM) |
 | `POST` | `.../topics/:topicId/synthesize` | AI 의견 추합·정리 |

@@ -330,8 +330,19 @@ button.primary { background: var(--accent); }
 
 .empty-hint {
   position: absolute; left: 40px; top: 40px;
-  color: var(--muted); font-size: 14px; width: 260px;
+  color: var(--muted); font-size: 14px; width: 300px;
 }
+.empty-hint .empty-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.empty-hint .empty-sub { margin-bottom: 14px; }
+.empty-add-btn {
+  padding: 12px 20px; font-size: 15px; font-weight: 700;
+  background: var(--accent); color: #fff; border-radius: 10px; cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.empty-add-btn:hover { filter: brightness(1.05); }
+/* 사이드바 입력 강조 (빈 상태에서 안건 추가 유도) */
+input.pulse { animation: inputPulse 1.2s ease; }
+@keyframes inputPulse { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 0 4px var(--accent-soft); border-color:var(--accent)} }
 
 /* 타원형 토픽 노드 (계층적 크기) */
 .node {
@@ -499,6 +510,7 @@ button.primary { background: var(--accent); }
 }
 .node-act-btn.op { background: var(--node-color, var(--accent)); color: #fff; }
 .node-act-btn.sub { background: #fff; color: var(--node-color, var(--accent)); border-color: var(--node-color, var(--accent)); }
+.node-act-btn.edit { background: #fff; color: var(--muted); border-color: var(--line); padding: 3px 8px; }
 .node-act-btn:hover { filter: brightness(1.05); }
 
 /* 오른쪽 의견 사이드 패널 (메인 캔버스) */
@@ -711,6 +723,8 @@ body.is-decided .doc-title { color: #0f7a4d; }
 .chat-replies .comments-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .chat-replies .comment { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
 .chat-replies .comment .author { font-weight: 600; }
+.chat-replies .comment .c-edit { background: transparent; border: none; cursor: pointer; font-size: 11px; padding: 0 4px; margin-left: auto; opacity: 0.6; }
+.chat-replies .comment .c-edit:hover { opacity: 1; }
 .chat-reply-form { display: flex; gap: 6px; margin-top: 8px; }
 .chat-reply-form input { margin: 0; flex: 1; }
 
