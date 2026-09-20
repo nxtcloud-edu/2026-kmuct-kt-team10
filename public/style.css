@@ -737,6 +737,8 @@ body.is-decided .doc-title { color: #0f7a4d; }
 .chat-replies .comment .author { font-weight: 600; }
 .chat-replies .comment .c-edit { background: transparent; border: none; cursor: pointer; font-size: 11px; padding: 0 4px; margin-left: auto; opacity: 0.6; }
 .chat-replies .comment .c-edit:hover { opacity: 1; }
+.chat-replies .comment .c-del { color: #e5484d; opacity: 1; }
+.chat-replies .comment .c-del:hover { color: #c5262b; opacity: 1; }
 .chat-reply-form { display: flex; gap: 6px; margin-top: 8px; }
 .chat-reply-form input { margin: 0; flex: 1; }
 

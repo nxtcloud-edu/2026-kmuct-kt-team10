@@ -327,7 +327,7 @@ function renderOpinion(op) {
         el('span', { class: 'author' }, nameOf(c.authorId)),
         el('span', { class: 'c-body' }, c.content + (c.editedAt ? ' (수정됨)' : '')),
         canEdit ? el('button', { class: 'c-edit', title: '답글 수정', onclick: () => startEditComment(op, c) }, '✏️') : null,
-        canEdit ? el('button', { class: 'c-edit', title: '답글 삭제', onclick: () => deleteComment(op, c) }, '🗑') : null,
+        canEdit ? el('button', { class: 'c-edit c-del', title: '답글 삭제', onclick: () => deleteComment(op, c) }, '🗑') : null,
       ]));
     }
     bubble.append(cw);
